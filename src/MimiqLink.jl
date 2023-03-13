@@ -210,7 +210,11 @@ function request(conn::Connection, name, label, files...)
   ]
 
   for file in files
-    push!(data, "uploads" => file)
+    if isa(AbstractString, file)
+      push!(data, open(file))
+    else
+      push!(data, "uploads" => file)
+    end
   end
 
   body = HTTP.Form(data)

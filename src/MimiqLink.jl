@@ -11,6 +11,15 @@ using Sockets
 using JSON
 using URIs
 
+# How does the library works?
+# When using connect() the library will spawn a little file server that will serve the files contained in the /public folder.
+# A browser page will open showing the served login page
+# The user can insert its username and password.
+# After receiving the username and password the server will try to login at the remote endpoint.
+# If login is successfull it will store the received token and spawn a process that will refresh the token every 15 minutes
+# A Connection object will contain all the information required to send requests with the request(...) function.
+# The user can close the connection, shutting down the automatic refresher, by using the close(...) function.
+
 """
    const QPERFECT_CLOUD
 
@@ -43,6 +52,11 @@ end
 
 JSON.lower(t::Tokens) = Dict("token" => t.accesstoken, "refreshToken" => t.refreshtoken)
 
+"""
+  refresh(tokens, uri)
+
+Refresh the tokens at the given uri / instance of MIMIQ.
+"""
 function refresh(t::Tokens, uri::URI)
   res = HTTP.post(joinpath(uri, "/api/access-token"), JSONHEADERS, JSON.json(Dict("refreshToken" => t.refreshtoken)); status_exception=false)
 

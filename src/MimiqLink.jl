@@ -5,6 +5,7 @@
 #
 module MimiqLink
 
+using Base: typename
 using FileTypes
 using HTTP
 using Sockets
@@ -25,7 +26,7 @@ using URIs
 
 Fallback address for the QPerfect Cloud services
 """
-const QPERFECT_CLOUD = URI("http://vps-f8c698f6.vps.ovh.net/")
+const QPERFECT_CLOUD = URI("http://vps-f8c698f6.vps.ovh.net/api")
 
 # headers to have request send json content
 const JSONHEADERS = ["Content-Type" => "application/json"]
@@ -50,6 +51,20 @@ function Tokens(dict::Dict{String,T}) where {T}
   Tokens(dict["token"], dict["refreshToken"])
 end
 
+function Base.show(io::IO, tokens::Tokens)
+  compact = get(io, :compact, false)
+
+  if !compact
+    println(io, "Tokens:")
+    println(io, "├── access: ", tokens.accesstoken)
+    print(io, "└── refresh: ", tokens.refreshtoken)
+  else
+    print(io, "Tokens(\"$(tokens.accesstoken)\", \"$(tokens.refreshtoken)\")")
+  end
+
+  nothing
+end
+
 JSON.lower(t::Tokens) = Dict("token" => t.accesstoken, "refreshToken" => t.refreshtoken)
 
 """
@@ -58,7 +73,7 @@ JSON.lower(t::Tokens) = Dict("token" => t.accesstoken, "refreshToken" => t.refre
 Refresh the tokens at the given uri / instance of MIMIQ.
 """
 function refresh(t::Tokens, uri::URI)
-  res = HTTP.post(joinpath(uri, "/api/access-token"), JSONHEADERS, JSON.json(Dict("refreshToken" => t.refreshtoken)); status_exception=false)
+  res = HTTP.post(joinpath(uri, "access-token"), JSONHEADERS, JSON.json(Dict("refreshToken" => t.refreshtoken)); status_exception=false)
 
   if HTTP.iserror(res)
     error("Failed to refresh connection to MIMIQ, please try to connect again.")
@@ -107,7 +122,10 @@ function Connection(uri::URI, token::Tokens; interval=60)
       end
     catch ex
       if isa(ex, InterruptException)
-        @info "Closing refresher"
+        @info "Gracefully shutting down token refresher"
+      else
+        put!(ch, Tokens())
+        @warn "Connection to MIMIQ services dropped."
       end
     end
   end
@@ -115,10 +133,22 @@ function Connection(uri::URI, token::Tokens; interval=60)
   return Connection(uri, ch, task)
 end
 
+function Base.show(io::IO, conn::Connection)
+  compact = get(io, :compact, false)
+  if !compact
+    status = istaskdone(conn.refresher) ? "closed" : "open"
+    print(io, typeof(conn), "(url = $(conn.uri), status = $status)")
+  else
+    print(io, typeof(conn), "($(conn.uri)")
+  end
+
+  nothing
+end
+
 function login(uri::URI, req::HTTP.Request, c::Condition)
   data = JSON.parse(String(HTTP.payload(req)))
 
-  res = HTTP.post(joinpath(uri, "/api/sign-in"), JSONHEADERS, JSON.json(Dict("email" => data["email"], "password" => data["password"])); status_exception=false)
+  res = HTTP.post(joinpath(uri, "sign-in"), JSONHEADERS, JSON.json(Dict("email" => data["email"], "password" => data["password"])); status_exception=false)
 
   json_res = JSON.parse(String(HTTP.payload(res)))
 
@@ -224,8 +254,8 @@ function request(conn::Connection, name, label, files...)
   ]
 
   for file in files
-    if isa(AbstractString, file)
-      push!(data, open(file))
+    if file isa AbstractString
+      push!(data, "uploads" => open(file, "r"))
     else
       push!(data, "uploads" => file)
     end
@@ -234,21 +264,37 @@ function request(conn::Connection, name, label, files...)
   body = HTTP.Form(data)
   tokens = fetch(conn.tokens_channel)
   headers = ["Authorization" => "Bearer " * tokens.accesstoken]
-  res = HTTP.post(joinpath(conn.uri, "/api/request"), headers, body)
+  res = HTTP.post(joinpath(conn.uri, "request"), headers, body)
 
-  #res = JSON.parse(String(HTTP.payload(res)))
-  #return Execution(res["executionRequestId"])
-  return Execution("640f112300514323466c0e35")
+  res = JSON.parse(String(HTTP.payload(res)))
+  return Execution(res["executionRequestId"])
 end
 
-function getrequestinfo(conn::Connection, req::Execution)
+function requestinfo(conn::Connection, req::Execution)
   tokens = fetch(conn.tokens_channel)
   headers = ["Authorization" => "Bearer " * tokens.accesstoken]
 
-  res = HTTP.get(joinpath(conn.uri, "/request/$(req.id)"), headers, "")
+  uri = joinpath(conn.uri, "request", req.id)
 
-  #return JSON.parse(String(HTTP.payload(res)))
-  return res
+  res = HTTP.get(uri, headers, "")
+
+  return JSON.parse(String(HTTP.payload(res)))
+end
+
+function isjobdone(conn::Connection, req::Execution)
+  infos = requestinfo(conn, req)
+  status = infos["status"]
+  return status == "DONE" || status == "ERROR"
+end
+
+function isjobfailed(conn::Connection, req::Execution)
+  infos = requestinfo(conn, req)
+  return infos["status"] == "ERROR"
+end
+
+function isjobstarted(conn::Connection, req::Execution)
+  infos = requestinfo(conn, req)
+  return infos["status"] != "NEW"
 end
 
 end # module MimiqLink

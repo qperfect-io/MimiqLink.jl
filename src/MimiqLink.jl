@@ -67,7 +67,6 @@ module MimiqLink
 using Base: typename
 using FileTypes
 using HTTP
-using FileIO
 using Sockets
 using JSON
 using URIs
@@ -319,22 +318,23 @@ end
 
 function savetoken(; uri::URI=QPERFECT_CLOUD)
   tokens = gettoken(uri)
-  save("qperfect.json", Dict("url" => string(uri), "token" => tokens.refreshtoken))
+  open("qperfect.json", "w") do io
+    JSON.print(io, Dict("url" => string(uri), "token" => tokens.refreshtoken))
+  end
   @info "Token saved in `qperfect.json`"
 end
 
 function loadtoken(file::AbstractString)
-  dict = load("qperfect.json")
+  dict = JSON.parsefile("qperfect.json")
 
   if !haskey(dict, "url") || !haskey(dict, "token")
     error("Malformed token file")
   end
 
   uri = URI(dict["url"])
-  refreshtoken = URI(dict["token"])
   @info "Loaded connection file to $uri"
 
-  return connect(refreshtoken, uri)
+  return connect(dict["token"]; uri=uri)
 end
 
 function connect(; uri::URI=QPERFECT_CLOUD, kwargs...)

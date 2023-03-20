@@ -2,12 +2,72 @@
 # Copyright © 2023 University of Strasbourg. All Rights Reserved.
 # See AUTHORS.md for the list of authors.
 #
-#
+
+"""
+    module MimiqLink end
+
+This module contains convenience tools to establish and keep up a connection
+to the QPerfect MIMIQ services, both remote or on premises.
+
+It allows for three different connection modes: via login page, via token, via credentials
+
+## Login Page
+
+This method will open a browser pointing to a login page. The user will be asked to insert username/email and password.
+
+```
+julia> using MimiqLink
+
+julia> connection = MimiqLink.connect()
+```
+
+optionally an address for the MIMIQ services can be specified
+
+```
+julia> connection = MimiqLink.connect(uri = "http://127.0.0.1/api")
+```
+
+## Token
+
+This method will allow the user to save a token file (by login via a login page), and then load it also from another julia session.
+
+```
+julia> using MimiqLink
+
+julia> MimiqLink.savetoken(uri = "http://127.0.0.1/api")
+```
+
+this will save a token in the `qperfect.json` file in the current directory.
+In another julia session is then possible to do:
+
+```
+julia> using MimiqLink
+
+julia> connection = MimiqLink.loadtoken("path/to/my/qperfect.json")
+```
+
+## Credentials
+
+This method will allow users to access by directly use their own credentials.
+
+**WARNING** it is strongly discuraged to use this method. If files with credentials will be shared the access to the qperfect account might be compromised.
+
+```
+julia> using MimiqLink
+
+julia> connection = MimiqLink.connect("me@mymail.com", "myweakpassword")
+```
+
+```
+julia> MimiqLink.connect("me@mymail.com", "myweakpassword"; uri = "http://127.0.0.1/api")
+```
+"""
 module MimiqLink
 
 using Base: typename
 using FileTypes
 using HTTP
+using FileIO
 using Sockets
 using JSON
 using URIs
@@ -27,6 +87,14 @@ using URIs
 Fallback address for the QPerfect Cloud services
 """
 const QPERFECT_CLOUD = URI("http://vps-f8c698f6.vps.ovh.net/api")
+
+
+"""
+  const DEFAULT_INTERVAL
+
+Default refresh interval for tokens (in seconds)
+"""
+const DEFAULT_INTERVAL = 15 * 60
 
 # headers to have request send json content
 const JSONHEADERS = ["Content-Type" => "application/json"]
@@ -101,7 +169,7 @@ struct Connection
   refresher::Task
 end
 
-function Connection(uri::URI, token::Tokens; interval=60)
+function Connection(uri::URI, token::Tokens; interval=DEFAULT_INTERVAL)
   ch = Channel{Tokens}(1)
 
   put!(ch, token)
@@ -143,6 +211,17 @@ function Base.show(io::IO, conn::Connection)
   end
 
   nothing
+end
+
+
+function remotelogin(uri::URI, email, password)
+  res = HTTP.post(joinpath(uri, "sign-in"), JSONHEADERS, JSON.json(Dict("email" => email, "password" => password)); status_exception=false)
+  json_res = JSON.parse(String(HTTP.payload(res)))
+  if HTTP.iserror(res)
+    reason = json_res["message"]
+    error("Failed login with status code $(res.status) and reason: \"$reason\".")
+  end
+  Tokens(json_res)
 end
 
 function login(uri::URI, req::HTTP.Request, c::Condition)
@@ -216,7 +295,7 @@ function fileserver(req::HTTP.Request)
   return HTTP.Response(404)
 end
 
-function connect(uri::URI=QPERFECT_CLOUD; interval=15 * 60)
+function gettoken(uri)
   APIROUTER = HTTP.Router()
 
   logged = Condition()
@@ -235,7 +314,45 @@ function connect(uri::URI=QPERFECT_CLOUD; interval=15 * 60)
 
   close(server)
 
-  return Connection(uri, tokens; interval=interval)
+  return tokens
+end
+
+function savetoken(; uri::URI=QPERFECT_CLOUD)
+  tokens = gettoken(uri)
+  save("qperfect.json", Dict("url" => string(uri), "token" => tokens.refreshtoken))
+  @info "Token saved in `qperfect.json`"
+end
+
+function loadtoken(file::AbstractString)
+  dict = load("qperfect.json")
+
+  if !haskey(dict, "url") || !haskey(dict, "token")
+    error("Malformed token file")
+  end
+
+  uri = URI(dict["url"])
+  refreshtoken = URI(dict["token"])
+  @info "Loaded connection file to $uri"
+
+  return connect(refreshtoken, uri)
+end
+
+function connect(; uri::URI=QPERFECT_CLOUD, kwargs...)
+  tokens = gettoken(uri)
+  return Connection(uri, tokens; kwargs...)
+end
+
+function connect(token::AbstractString; uri::URI=QPERFECT_CLOUD, kwargs...)
+  @info "Obtaining access token for connection"
+  t = refresh(Tokens("", token), uri)
+  @info "Access token obtained. You should now be connected to MIMIQ Services."
+  return Connection(uri, t; kwargs...)
+end
+
+function connect(email::AbstractString, password::AbstractString; uri::URI=QPERFECT_CLOUD, kwargs...)
+  @warn "This connection methods is discuraged. Please use `connect()`, `connect(url)` or `connect(token[, url])`, if possible."
+  t = remotelogin(uri, email, password)
+  return Connection(uri, t; kwargs...)
 end
 
 function Base.close(conn::Connection)

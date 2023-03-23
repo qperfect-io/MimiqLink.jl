@@ -70,6 +70,7 @@ using HTTP
 using Sockets
 using JSON
 using URIs
+using ProgressLogging
 
 # How does the library works?
 # When using connect() the library will spawn a little file server that will serve the files contained in the /public folder.
@@ -379,21 +380,16 @@ function request(conn::Connection, name, label, files...)
   end
 
   body = HTTP.Form(data)
-  tokens = fetch(conn.tokens_channel)
-  headers = ["Authorization" => "Bearer " * tokens.accesstoken]
-  res = HTTP.post(joinpath(conn.uri, "request"), headers, body)
+  res = HTTP.post(joinpath(conn.uri, "request"), [_authheader(conn)], body)
 
   res = JSON.parse(String(HTTP.payload(res)))
   return Execution(res["executionRequestId"])
 end
 
 function requestinfo(conn::Connection, req::Execution)
-  tokens = fetch(conn.tokens_channel)
-  headers = ["Authorization" => "Bearer " * tokens.accesstoken]
-
   uri = joinpath(conn.uri, "request", req.id)
 
-  res = HTTP.get(uri, headers, "")
+  res = HTTP.get(uri, [_authheader(conn)], "")
 
   return JSON.parse(String(HTTP.payload(res)))
 end
@@ -412,6 +408,79 @@ end
 function isjobstarted(conn::Connection, req::Execution)
   infos = requestinfo(conn, req)
   return infos["status"] != "NEW"
+end
+
+# similar to HTTP.download, but instead of using the callback to report
+# progress, use ProgressLogging.jl
+function _download(url::AbstractString, local_path=nothing, headers=HTTP.Header[]; kw...)
+  # code taken and modified from HTTP.jl v1.7.4
+  # https://github.com/JuliaWeb/HTTP.jl/blob/040df996e608572fee760fc9816376a2d8fe3299/src/download.jl#L79-L95
+
+  @debug "Downloading $url"
+
+  # NOTE: defined here to be persistent through all redirections
+  local file
+  hdrs = String[]
+
+  # automatically takes care of redirections
+  HTTP.open("GET", url, headers; kw...) do stream
+    resp = startread(stream)
+    # Store intermediate header from redirects to use for filename detection
+    content_disp = HTTP.header(resp, "Content-Disposition")
+    !isempty(content_disp) && push!(hdrs, content_disp)
+    eof(stream) && return  # don't do anything for streams we can't read (yet)
+
+    file = HTTP.determine_file(local_path, resp, [content_disp])
+    total_bytes = parse(Float64, HTTP.header(resp, "Content-Length", "NaN"))
+    downloaded_bytes = 0
+
+    if HTTP.header(resp, "Content-Encoding") == "gzip"
+      stream = HTTP.GzipDecompressorStream(stream) # auto decoding
+      total_bytes = NaN # We don't know actual total bytes if the content is zipped.
+    end
+
+    # Download the file while loggin progress. In order to show progress bars
+    # an user should install and configure TerminalLoggers.jl
+    @withprogress name = basename(file) begin
+      Base.open(file, "w") do fh
+        while (!eof(stream))
+          downloaded_bytes += write(fh, readavailable(stream))
+          @logprogress downloaded_bytes / total_bytes
+        end
+      end
+    end
+  end
+
+  file
+end
+
+function downloadresults(conn::Connection, req::Execution, destdir=joinpath("./", req.id))
+  @info "Downloading results in $destdir"
+
+  if !isdir(destdir)
+    mkdir(destdir)
+  end
+
+  infos = requestinfo(conn, req)
+  names = []
+
+  for idx in 0:(get(infos, "numberOfUploadedFiles", 0)-1)
+    uri = URI(joinpath(conn.uri, "files", req.id, string(idx)); query=Dict("source" => "uploads"))
+    fname = _download(string(uri), destdir, [_authheader(conn)]; update_period=Inf)
+    push!(names, fname)
+  end
+
+  return names
+end
+
+# Authentication header. To be used in function with
+# `headers = [_authheader(conn), "OtherHeader" => "headervalue", ...]`
+function _authheader(conn::Connection)
+  # fetch, not take!, otherwise next time we have to wait for a put! in the channel
+  tokens = fetch(conn.tokens_channel)
+  # TODO: check: Bearer or bearer?
+  # Bearer seems to work for now.
+  "Authorization" => "Bearer " * tokens.accesstoken
 end
 
 end # module MimiqLink

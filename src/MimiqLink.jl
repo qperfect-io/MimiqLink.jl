@@ -203,16 +203,18 @@ end
 
 function Base.show(io::IO, conn::Connection)
   compact = get(io, :compact, false)
+
   if !compact
     status = istaskdone(conn.refresher) ? "closed" : "open"
-    print(io, typeof(conn), "(url = $(conn.uri), status = $status)")
+    println(io, "Connection:")
+    println(io, "├── url: ", conn.uri)
+    print(io, "└── status: ", status)
   else
     print(io, typeof(conn), "($(conn.uri)")
   end
 
   nothing
 end
-
 
 function remotelogin(uri::URI, email, password)
   res = HTTP.post(joinpath(uri, "sign-in"), JSONHEADERS, JSON.json(Dict("email" => email, "password" => password)); status_exception=false)
@@ -365,6 +367,20 @@ struct Execution
   id::String
 end
 
+function Base.show(io::IO, ex::Execution)
+  compact = get(io, :compact, false)
+
+  if !compact
+    println(io, "Execution")
+    print(io, "└── ", ex.id)
+  else
+    print(io, typename(ex), "($(ex.id))")
+  end
+end
+
+
+
+# TODO: add support for progress bars when uploading files
 function request(conn::Connection, name, label, files...)
   data = Pair{String,Any}[
     "name"=>name,
@@ -454,8 +470,8 @@ function _download(url::AbstractString, local_path=nothing, headers=HTTP.Header[
   file
 end
 
-function downloadresults(conn::Connection, req::Execution, destdir=joinpath("./", req.id))
-  @info "Downloading results in $destdir"
+function _downloadfiles(conn, req, destdir, type)
+  @info "Downloading jobfiles in $destdir"
 
   if !isdir(destdir)
     mkdir(destdir)
@@ -464,13 +480,28 @@ function downloadresults(conn::Connection, req::Execution, destdir=joinpath("./"
   infos = requestinfo(conn, req)
   names = []
 
-  for idx in 0:(get(infos, "numberOfUploadedFiles", 0)-1)
-    uri = URI(joinpath(conn.uri, "files", req.id, string(idx)); query=Dict("source" => "uploads"))
+  nf = get(infos, "numberOf$(type == :uploads ? "Uploaded" : "Resulted")Files", 0)
+
+  if nf == 0 || !(nf isa Number)
+    @warn "No files to download."
+    return names
+  end
+
+  for idx in 0:(nf-1)
+    uri = URI(joinpath(conn.uri, "files", req.id, string(idx)); query=Dict("source" => string(type)))
     fname = _download(string(uri), destdir, [_authheader(conn)]; update_period=Inf)
     push!(names, fname)
   end
 
   return names
+end
+
+function downloadjobfiles(conn::Connection, req::Execution, destdir=joinpath("./", req.id))
+  _downloadfiles(conn, req, destdir, :uploads)
+end
+
+function downloadresults(conn::Connection, req::Execution, destdir=joinpath("./", req.id))
+  _downloadfiles(conn, req, destdir, :results)
 end
 
 # Authentication header. To be used in function with

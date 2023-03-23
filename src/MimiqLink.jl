@@ -105,32 +105,32 @@ const JSONHEADERS = ["Content-Type" => "application/json"]
 Store access and refresh tokens
 """
 struct Tokens
-  accesstoken::String
-  refreshtoken::String
+    accesstoken::String
+    refreshtoken::String
 end
 
 Tokens() = Tokens("", "")
 
 function Tokens(d::Dict)
-  Tokens(d["token"], d["refreshToken"])
+    Tokens(d["token"], d["refreshToken"])
 end
 
-function Tokens(dict::Dict{String,T}) where {T}
-  Tokens(dict["token"], dict["refreshToken"])
+function Tokens(dict::Dict{String, T}) where {T}
+    Tokens(dict["token"], dict["refreshToken"])
 end
 
 function Base.show(io::IO, tokens::Tokens)
-  compact = get(io, :compact, false)
+    compact = get(io, :compact, false)
 
-  if !compact
-    println(io, "Tokens:")
-    println(io, "├── access: ", tokens.accesstoken)
-    print(io, "└── refresh: ", tokens.refreshtoken)
-  else
-    print(io, "Tokens(\"$(tokens.accesstoken)\", \"$(tokens.refreshtoken)\")")
-  end
+    if !compact
+        println(io, "Tokens:")
+        println(io, "├── access: ", tokens.accesstoken)
+        print(io, "└── refresh: ", tokens.refreshtoken)
+    else
+        print(io, "Tokens(\"$(tokens.accesstoken)\", \"$(tokens.refreshtoken)\")")
+    end
 
-  nothing
+    nothing
 end
 
 JSON.lower(t::Tokens) = Dict("token" => t.accesstoken, "refreshToken" => t.refreshtoken)
@@ -141,15 +141,20 @@ JSON.lower(t::Tokens) = Dict("token" => t.accesstoken, "refreshToken" => t.refre
 Refresh the tokens at the given uri / instance of MIMIQ.
 """
 function refresh(t::Tokens, uri::URI)
-  res = HTTP.post(joinpath(uri, "access-token"), JSONHEADERS, JSON.json(Dict("refreshToken" => t.refreshtoken)); status_exception=false)
+    res = HTTP.post(
+        joinpath(uri, "access-token"),
+        JSONHEADERS,
+        JSON.json(Dict("refreshToken" => t.refreshtoken));
+        status_exception=false,
+    )
 
-  if HTTP.iserror(res)
-    error("Failed to refresh connection to MIMIQ, please try to connect again.")
-  end
+    if HTTP.iserror(res)
+        error("Failed to refresh connection to MIMIQ, please try to connect again.")
+    end
 
-  resbody = JSON.parse(String(HTTP.payload(res)))
+    resbody = JSON.parse(String(HTTP.payload(res)))
 
-  return Tokens(resbody["token"], resbody["refreshToken"])
+    return Tokens(resbody["token"], resbody["refreshToken"])
 end
 
 """
@@ -164,354 +169,371 @@ Connection with the MIMIQ Services.
 * `refresher`: task that refreshes the token on a configured interval
 """
 struct Connection
-  uri::URI
-  tokens_channel::Channel{Tokens}
-  refresher::Task
+    uri::URI
+    tokens_channel::Channel{Tokens}
+    refresher::Task
 end
 
 function Connection(uri::URI, token::Tokens; interval=DEFAULT_INTERVAL)
-  ch = Channel{Tokens}(1)
+    ch = Channel{Tokens}(1)
 
-  put!(ch, token)
+    put!(ch, token)
 
-  task = @async begin
-    try
-      while true
-        sleep(interval)
+    task = @async begin
+        try
+            while true
+                sleep(interval)
 
-        @debug "Refreshing tokens"
+                @debug "Refreshing tokens"
 
-        token = take!(ch)
-        newtoken = refresh(token, uri)
+                token = take!(ch)
+                newtoken = refresh(token, uri)
 
-        @debug "Received new token" newtoken
+                @debug "Received new token" newtoken
 
-        put!(ch, newtoken)
-      end
-    catch ex
-      if isa(ex, InterruptException)
-        @info "Gracefully shutting down token refresher"
-      else
-        put!(ch, Tokens())
-        @warn "Connection to MIMIQ services dropped."
-      end
+                put!(ch, newtoken)
+            end
+        catch ex
+            if isa(ex, InterruptException)
+                @info "Gracefully shutting down token refresher"
+            else
+                put!(ch, Tokens())
+                @warn "Connection to MIMIQ services dropped."
+            end
+        end
     end
-  end
 
-  return Connection(uri, ch, task)
+    return Connection(uri, ch, task)
 end
 
 function Base.show(io::IO, conn::Connection)
-  compact = get(io, :compact, false)
+    compact = get(io, :compact, false)
 
-  if !compact
-    status = istaskdone(conn.refresher) ? "closed" : "open"
-    println(io, "Connection:")
-    println(io, "├── url: ", conn.uri)
-    print(io, "└── status: ", status)
-  else
-    print(io, typeof(conn), "($(conn.uri)")
-  end
+    if !compact
+        status = istaskdone(conn.refresher) ? "closed" : "open"
+        println(io, "Connection:")
+        println(io, "├── url: ", conn.uri)
+        print(io, "└── status: ", status)
+    else
+        print(io, typeof(conn), "($(conn.uri)")
+    end
 
-  nothing
+    nothing
 end
 
 function remotelogin(uri::URI, email, password)
-  res = HTTP.post(joinpath(uri, "sign-in"), JSONHEADERS, JSON.json(Dict("email" => email, "password" => password)); status_exception=false)
-  json_res = JSON.parse(String(HTTP.payload(res)))
-  if HTTP.iserror(res)
-    reason = json_res["message"]
-    error("Failed login with status code $(res.status) and reason: \"$reason\".")
-  end
-  Tokens(json_res)
+    res = HTTP.post(
+        joinpath(uri, "sign-in"),
+        JSONHEADERS,
+        JSON.json(Dict("email" => email, "password" => password));
+        status_exception=false,
+    )
+    json_res = JSON.parse(String(HTTP.payload(res)))
+    if HTTP.iserror(res)
+        reason = json_res["message"]
+        error("Failed login with status code $(res.status) and reason: \"$reason\".")
+    end
+    Tokens(json_res)
 end
 
 function login(uri::URI, req::HTTP.Request, c::Condition)
-  data = JSON.parse(String(HTTP.payload(req)))
+    data = JSON.parse(String(HTTP.payload(req)))
 
-  res = HTTP.post(joinpath(uri, "sign-in"), JSONHEADERS, JSON.json(Dict("email" => data["email"], "password" => data["password"])); status_exception=false)
+    res = HTTP.post(
+        joinpath(uri, "sign-in"),
+        JSONHEADERS,
+        JSON.json(Dict("email" => data["email"], "password" => data["password"]));
+        status_exception=false,
+    )
 
-  json_res = JSON.parse(String(HTTP.payload(res)))
+    json_res = JSON.parse(String(HTTP.payload(res)))
 
-  if HTTP.iserror(res)
-    reason = json_res["message"]
-    @warn "Failed with status code $(res.status) and reason: \"$reason\"."
-    return HTTP.Response(res.status, JSONHEADERS, JSON.json(json_res))
-  end
+    if HTTP.iserror(res)
+        reason = json_res["message"]
+        @warn "Failed with status code $(res.status) and reason: \"$reason\"."
+        return HTTP.Response(res.status, JSONHEADERS, JSON.json(json_res))
+    end
 
-  tokens = Tokens(json_res)
-  notify(c, tokens)
+    tokens = Tokens(json_res)
+    notify(c, tokens)
 
-  return HTTP.Response(200, JSONHEADERS, JSON.json(Dict("message" => "Login successfull.")))
+    return HTTP.Response(
+        200,
+        JSONHEADERS,
+        JSON.json(Dict("message" => "Login successfull.")),
+    )
 end
 
 # from https://github.com/JuliaLang/julia/pull/36425
 function detectwsl()
-  Sys.islinux() &&
-    isfile("/proc/sys/kernel/osrelease") &&
-    occursin(r"Microsoft|WSL"i, read("/proc/sys/kernel/osrelease", String))
+    Sys.islinux() &&
+        isfile("/proc/sys/kernel/osrelease") &&
+        occursin(r"Microsoft|WSL"i, read("/proc/sys/kernel/osrelease", String))
 end
 
 function open_in_default_browser(url::AbstractString)::Bool
-  try
-    if Sys.isapple()
-      Base.run(`open $url`)
-      true
-    elseif Sys.iswindows() || detectwsl()
-      Base.run(`powershell.exe Start "'$url'"`)
-      true
-    elseif Sys.islinux()
-      Base.run(`xdg-open $url`)
-      true
-    else
-      false
+    try
+        if Sys.isapple()
+            Base.run(`open $url`)
+            true
+        elseif Sys.iswindows() || detectwsl()
+            Base.run(`powershell.exe Start "'$url'"`)
+            true
+        elseif Sys.islinux()
+            Base.run(`xdg-open $url`)
+            true
+        else
+            false
+        end
+    catch _
+        false
     end
-  catch _
-    false
-  end
 end
 
 function fileserver(req::HTTP.Request)
-  requested_file = req.target == "/" ? "/index.html" : req.target
+    requested_file = req.target == "/" ? "/index.html" : req.target
 
-  if isnothing(requested_file)
-    return HTTP.(403)
-  end
+    if isnothing(requested_file)
+        return HTTP.(403)
+    end
 
-  file = joinpath(@__DIR__, "..", "public", HTTP.unescapeuri(requested_file[2:end]))
+    file = joinpath(@__DIR__, "..", "public", HTTP.unescapeuri(requested_file[2:end]))
 
-  extension = splitext(file)[2]
-  mime = extension == ".js" ? "application/javascript" :
-         extension == ".html" ? "text/html" :
-         extension == ".css" ? "text/css" :
-         try
-    matcher(file).mime
-  catch
-    ""
-  end
+    extension = splitext(file)[2]
+    mime =
+        extension == ".js" ? "application/javascript" :
+        extension == ".html" ? "text/html" :
+        extension == ".css" ? "text/css" : try
+            matcher(file).mime
+        catch
+            ""
+        end
 
-  if isfile(file)
-    return HTTP.Response(200, ["Content-Type" => mime], read(file))
-  end
+    if isfile(file)
+        return HTTP.Response(200, ["Content-Type" => mime], read(file))
+    end
 
-  return HTTP.Response(404)
+    return HTTP.Response(404)
 end
 
 function gettoken(uri)
-  APIROUTER = HTTP.Router()
+    APIROUTER = HTTP.Router()
 
-  logged = Condition()
+    logged = Condition()
 
-  HTTP.register!(APIROUTER, "POST", "/api/login", req -> login(uri, req, logged))
-  HTTP.register!(APIROUTER, "GET", "/", fileserver)
-  HTTP.register!(APIROUTER, "GET", "/**", fileserver)
+    HTTP.register!(APIROUTER, "POST", "/api/login", req -> login(uri, req, logged))
+    HTTP.register!(APIROUTER, "GET", "/", fileserver)
+    HTTP.register!(APIROUTER, "GET", "/**", fileserver)
 
-  server = HTTP.serve!(APIROUTER, Sockets.localhost, 1444; listenany=true)
+    server = HTTP.serve!(APIROUTER, Sockets.localhost, 1444; listenany=true)
 
-  p = HTTP.port(server)
-  @info "Please login in your browser at http://127.0.0.1:$p"
-  open_in_default_browser("http://127.0.0.1:$p/")
+    p = HTTP.port(server)
+    @info "Please login in your browser at http://127.0.0.1:$p"
+    open_in_default_browser("http://127.0.0.1:$p/")
 
-  tokens = wait(logged)
+    tokens = wait(logged)
 
-  close(server)
+    close(server)
 
-  return tokens
+    return tokens
 end
 
 function savetoken(; uri::URI=QPERFECT_CLOUD)
-  tokens = gettoken(uri)
-  open("qperfect.json", "w") do io
-    JSON.print(io, Dict("url" => string(uri), "token" => tokens.refreshtoken))
-  end
-  @info "Token saved in `qperfect.json`"
+    tokens = gettoken(uri)
+    open("qperfect.json", "w") do io
+        JSON.print(io, Dict("url" => string(uri), "token" => tokens.refreshtoken))
+    end
+    @info "Token saved in `qperfect.json`"
 end
 
 function loadtoken(file::AbstractString)
-  dict = JSON.parsefile("qperfect.json")
+    dict = JSON.parsefile("qperfect.json")
 
-  if !haskey(dict, "url") || !haskey(dict, "token")
-    error("Malformed token file")
-  end
+    if !haskey(dict, "url") || !haskey(dict, "token")
+        error("Malformed token file")
+    end
 
-  uri = URI(dict["url"])
-  @info "Loaded connection file to $uri"
+    uri = URI(dict["url"])
+    @info "Loaded connection file to $uri"
 
-  return connect(dict["token"]; uri=uri)
+    return connect(dict["token"]; uri=uri)
 end
 
 function connect(; uri::URI=QPERFECT_CLOUD, kwargs...)
-  tokens = gettoken(uri)
-  return Connection(uri, tokens; kwargs...)
+    tokens = gettoken(uri)
+    return Connection(uri, tokens; kwargs...)
 end
 
 function connect(token::AbstractString; uri::URI=QPERFECT_CLOUD, kwargs...)
-  @info "Obtaining access token for connection"
-  t = refresh(Tokens("", token), uri)
-  @info "Access token obtained. You should now be connected to MIMIQ Services."
-  return Connection(uri, t; kwargs...)
+    @info "Obtaining access token for connection"
+    t = refresh(Tokens("", token), uri)
+    @info "Access token obtained. You should now be connected to MIMIQ Services."
+    return Connection(uri, t; kwargs...)
 end
 
-function connect(email::AbstractString, password::AbstractString; uri::URI=QPERFECT_CLOUD, kwargs...)
-  @warn "This connection methods is discuraged. Please use `connect()`, `connect(url)` or `connect(token[, url])`, if possible."
-  t = remotelogin(uri, email, password)
-  return Connection(uri, t; kwargs...)
+function connect(
+    email::AbstractString,
+    password::AbstractString;
+    uri::URI=QPERFECT_CLOUD,
+    kwargs...,
+)
+    @warn "This connection methods is discuraged. Please use `connect()`, `connect(url)` or `connect(token[, url])`, if possible."
+    t = remotelogin(uri, email, password)
+    return Connection(uri, t; kwargs...)
 end
 
 function Base.close(conn::Connection)
-  @info "Closing MIMIQ connection to $(conn.uri)"
-  schedule(conn.refresher, InterruptException(); error=true)
+    @info "Closing MIMIQ connection to $(conn.uri)"
+    schedule(conn.refresher, InterruptException(); error=true)
 end
 
 struct Execution
-  id::String
+    id::String
 end
 
 function Base.show(io::IO, ex::Execution)
-  compact = get(io, :compact, false)
+    compact = get(io, :compact, false)
 
-  if !compact
-    println(io, "Execution")
-    print(io, "└── ", ex.id)
-  else
-    print(io, typename(ex), "($(ex.id))")
-  end
+    if !compact
+        println(io, "Execution")
+        print(io, "└── ", ex.id)
+    else
+        print(io, typename(ex), "($(ex.id))")
+    end
 end
-
-
 
 # TODO: add support for progress bars when uploading files
 function request(conn::Connection, name, label, files...)
-  data = Pair{String,Any}[
-    "name"=>name,
-    "label"=>label
-  ]
+    data = Pair{String, Any}["name" => name, "label" => label]
 
-  for file in files
-    if file isa AbstractString
-      push!(data, "uploads" => open(file, "r"))
-    else
-      push!(data, "uploads" => file)
+    for file in files
+        if file isa AbstractString
+            push!(data, "uploads" => open(file, "r"))
+        else
+            push!(data, "uploads" => file)
+        end
     end
-  end
 
-  body = HTTP.Form(data)
-  res = HTTP.post(joinpath(conn.uri, "request"), [_authheader(conn)], body)
+    body = HTTP.Form(data)
+    res = HTTP.post(joinpath(conn.uri, "request"), [_authheader(conn)], body)
 
-  res = JSON.parse(String(HTTP.payload(res)))
-  return Execution(res["executionRequestId"])
+    res = JSON.parse(String(HTTP.payload(res)))
+    return Execution(res["executionRequestId"])
 end
 
 function requestinfo(conn::Connection, req::Execution)
-  uri = joinpath(conn.uri, "request", req.id)
+    uri = joinpath(conn.uri, "request", req.id)
 
-  res = HTTP.get(uri, [_authheader(conn)], "")
+    res = HTTP.get(uri, [_authheader(conn)], "")
 
-  return JSON.parse(String(HTTP.payload(res)))
+    return JSON.parse(String(HTTP.payload(res)))
 end
 
 function isjobdone(conn::Connection, req::Execution)
-  infos = requestinfo(conn, req)
-  status = infos["status"]
-  return status == "DONE" || status == "ERROR"
+    infos = requestinfo(conn, req)
+    status = infos["status"]
+    return status == "DONE" || status == "ERROR"
 end
 
 function isjobfailed(conn::Connection, req::Execution)
-  infos = requestinfo(conn, req)
-  return infos["status"] == "ERROR"
+    infos = requestinfo(conn, req)
+    return infos["status"] == "ERROR"
 end
 
 function isjobstarted(conn::Connection, req::Execution)
-  infos = requestinfo(conn, req)
-  return infos["status"] != "NEW"
+    infos = requestinfo(conn, req)
+    return infos["status"] != "NEW"
 end
 
 # similar to HTTP.download, but instead of using the callback to report
 # progress, use ProgressLogging.jl
 function _download(url::AbstractString, local_path=nothing, headers=HTTP.Header[]; kw...)
-  # code taken and modified from HTTP.jl v1.7.4
-  # https://github.com/JuliaWeb/HTTP.jl/blob/040df996e608572fee760fc9816376a2d8fe3299/src/download.jl#L79-L95
+    # code taken and modified from HTTP.jl v1.7.4
+    # https://github.com/JuliaWeb/HTTP.jl/blob/040df996e608572fee760fc9816376a2d8fe3299/src/download.jl#L79-L95
 
-  @debug "Downloading $url"
+    @debug "Downloading $url"
 
-  # NOTE: defined here to be persistent through all redirections
-  local file
-  hdrs = String[]
+    # NOTE: defined here to be persistent through all redirections
+    local file
+    hdrs = String[]
 
-  # automatically takes care of redirections
-  HTTP.open("GET", url, headers; kw...) do stream
-    resp = startread(stream)
-    # Store intermediate header from redirects to use for filename detection
-    content_disp = HTTP.header(resp, "Content-Disposition")
-    !isempty(content_disp) && push!(hdrs, content_disp)
-    eof(stream) && return  # don't do anything for streams we can't read (yet)
+    # automatically takes care of redirections
+    HTTP.open("GET", url, headers; kw...) do stream
+        resp = startread(stream)
+        # Store intermediate header from redirects to use for filename detection
+        content_disp = HTTP.header(resp, "Content-Disposition")
+        !isempty(content_disp) && push!(hdrs, content_disp)
+        eof(stream) && return  # don't do anything for streams we can't read (yet)
 
-    file = HTTP.determine_file(local_path, resp, [content_disp])
-    total_bytes = parse(Float64, HTTP.header(resp, "Content-Length", "NaN"))
-    downloaded_bytes = 0
+        file = HTTP.determine_file(local_path, resp, [content_disp])
+        total_bytes = parse(Float64, HTTP.header(resp, "Content-Length", "NaN"))
+        downloaded_bytes = 0
 
-    if HTTP.header(resp, "Content-Encoding") == "gzip"
-      stream = HTTP.GzipDecompressorStream(stream) # auto decoding
-      total_bytes = NaN # We don't know actual total bytes if the content is zipped.
-    end
-
-    # Download the file while loggin progress. In order to show progress bars
-    # an user should install and configure TerminalLoggers.jl
-    @withprogress name = basename(file) begin
-      Base.open(file, "w") do fh
-        while (!eof(stream))
-          downloaded_bytes += write(fh, readavailable(stream))
-          @logprogress downloaded_bytes / total_bytes
+        if HTTP.header(resp, "Content-Encoding") == "gzip"
+            stream = HTTP.GzipDecompressorStream(stream) # auto decoding
+            total_bytes = NaN # We don't know actual total bytes if the content is zipped.
         end
-      end
-    end
-  end
 
-  file
+        # Download the file while loggin progress. In order to show progress bars
+        # an user should install and configure TerminalLoggers.jl
+        @withprogress name = basename(file) begin
+            Base.open(file, "w") do fh
+                while (!eof(stream))
+                    downloaded_bytes += write(fh, readavailable(stream))
+                    @logprogress downloaded_bytes / total_bytes
+                end
+            end
+        end
+    end
+
+    file
 end
 
 function _downloadfiles(conn, req, destdir, type)
-  @info "Downloading jobfiles in $destdir"
+    @info "Downloading jobfiles in $destdir"
 
-  if !isdir(destdir)
-    mkdir(destdir)
-  end
+    if !isdir(destdir)
+        mkdir(destdir)
+    end
 
-  infos = requestinfo(conn, req)
-  names = []
+    infos = requestinfo(conn, req)
+    names = []
 
-  nf = get(infos, "numberOf$(type == :uploads ? "Uploaded" : "Resulted")Files", 0)
+    nf = get(infos, "numberOf$(type == :uploads ? "Uploaded" : "Resulted")Files", 0)
 
-  if nf == 0 || !(nf isa Number)
-    @warn "No files to download."
+    if nf == 0 || !(nf isa Number)
+        @warn "No files to download."
+        return names
+    end
+
+    for idx in 0:(nf - 1)
+        uri = URI(
+            joinpath(conn.uri, "files", req.id, string(idx));
+            query=Dict("source" => string(type)),
+        )
+        fname = _download(string(uri), destdir, [_authheader(conn)]; update_period=Inf)
+        push!(names, fname)
+    end
+
     return names
-  end
-
-  for idx in 0:(nf-1)
-    uri = URI(joinpath(conn.uri, "files", req.id, string(idx)); query=Dict("source" => string(type)))
-    fname = _download(string(uri), destdir, [_authheader(conn)]; update_period=Inf)
-    push!(names, fname)
-  end
-
-  return names
 end
 
 function downloadjobfiles(conn::Connection, req::Execution, destdir=joinpath("./", req.id))
-  _downloadfiles(conn, req, destdir, :uploads)
+    _downloadfiles(conn, req, destdir, :uploads)
 end
 
 function downloadresults(conn::Connection, req::Execution, destdir=joinpath("./", req.id))
-  _downloadfiles(conn, req, destdir, :results)
+    _downloadfiles(conn, req, destdir, :results)
 end
 
 # Authentication header. To be used in function with
 # `headers = [_authheader(conn), "OtherHeader" => "headervalue", ...]`
 function _authheader(conn::Connection)
-  # fetch, not take!, otherwise next time we have to wait for a put! in the channel
-  tokens = fetch(conn.tokens_channel)
-  # TODO: check: Bearer or bearer?
-  # Bearer seems to work for now.
-  "Authorization" => "Bearer " * tokens.accesstoken
+    # fetch, not take!, otherwise next time we have to wait for a put! in the channel
+    tokens = fetch(conn.tokens_channel)
+    # TODO: check: Bearer or bearer?
+    # Bearer seems to work for now.
+    "Authorization" => "Bearer " * tokens.accesstoken
 end
 
 end # module MimiqLink

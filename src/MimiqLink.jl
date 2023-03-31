@@ -86,8 +86,7 @@ using ProgressLogging
 
 Fallback address for the QPerfect Cloud services
 """
-const QPERFECT_CLOUD = URI("http://vps-f8c698f6.vps.ovh.net/api")
-
+const QPERFECT_CLOUD = URI("https://mimiq.qperfect.io/api")
 
 """
   const DEFAULT_INTERVAL

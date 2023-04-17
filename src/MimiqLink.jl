@@ -358,6 +358,30 @@ function loadtoken(file::AbstractString)
     return connect(dict["token"]; uri=uri)
 end
 
+"""
+    connect([; url=https://mimiq.qperfect.io])
+    connect(token[; url=https://mimiq.qperfect.io])
+    connect(username, password[; url=https://mimiq.qperfect.io])
+
+Establish a connection to the MIMIQ Services.
+
+A refresh process will be spawned in the background to refresh the access credentials.
+An active connection can be closed by using the `close(connection)` method. As an example:
+
+```julia
+connection = connect("john.doe@example.com", "johnspassword")
+close(connection)
+```
+
+!!! warning
+
+    The first method will open a login page in the default browser and ask for
+    your email and password. This method is encouraged, as it will avoid saving
+    your password as plain text in your scripts or notebooks.
+
+"""
+function connect end
+
 function connect(; uri::URI=QPERFECT_CLOUD, kwargs...)
     tokens = gettoken(uri)
     return Connection(uri, tokens; kwargs...)
@@ -386,6 +410,11 @@ function Base.close(conn::Connection)
     schedule(conn.refresher, InterruptException(); error=true)
 end
 
+"""
+    struct Execution
+
+Structure referring to an execution on the MIMIQ Services.
+"""
 struct Execution
     id::String
 end

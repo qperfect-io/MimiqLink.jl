@@ -1,0 +1,535 @@
+#
+# Copyright © 2022-2023 University of Strasbourg. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+"""
+    module MimiqLink end
+
+This module contains convenience tools to establish and keep up a connection
+to the QPerfect MIMIQ services, both remote or on premises.
+
+It allows for three different connection modes: via login page, via token, via credentials
+
+## Login Page
+
+This method will open a browser pointing to a login page. The user will be asked to insert username/email and password.
+
+```
+julia> using MimiqLink
+
+julia> connection = MimiqLink.connect()
+```
+
+optionally an address for the MIMIQ services can be specified
+
+```
+julia> connection = MimiqLink.connect(uri = "http://127.0.0.1/api")
+```
+
+## Token
+
+This method will allow the user to save a token file (by login via a login page), and then load it also from another julia session.
+
+```
+julia> using MimiqLink
+
+julia> MimiqLink.savetoken(uri = "http://127.0.0.1/api")
+```
+
+this will save a token in the `qperfect.json` file in the current directory.
+In another julia session is then possible to do:
+
+```
+julia> using MimiqLink
+
+julia> connection = MimiqLink.loadtoken("path/to/my/qperfect.json")
+```
+
+## Credentials
+
+This method will allow users to access by directly use their own credentials.
+
+**WARNING** it is strongly discuraged to use this method. If files with credentials will be shared the access to the qperfect account might be compromised.
+
+```
+julia> using MimiqLink
+
+julia> connection = MimiqLink.connect("me@mymail.com", "myweakpassword")
+```
+
+```
+julia> MimiqLink.connect("me@mymail.com", "myweakpassword"; uri = "http://127.0.0.1/api")
+```
+"""
+module MimiqLink
+
+using Base: typename
+using FileTypes
+using HTTP
+using Sockets
+using JSON
+using URIs
+using ProgressLogging
+
+# How does the library works?
+# When using connect() the library will spawn a little file server that will serve the files contained in the /public folder.
+# A browser page will open showing the served login page
+# The user can insert its username and password.
+# After receiving the username and password the server will try to login at the remote endpoint.
+# If login is successfull it will store the received token and spawn a process that will refresh the token every 15 minutes
+# A Connection object will contain all the information required to send requests with the request(...) function.
+# The user can close the connection, shutting down the automatic refresher, by using the close(...) function.
+
+"""
+   const QPERFECT_CLOUD
+
+Fallback address for the QPerfect Cloud services
+"""
+const QPERFECT_CLOUD = URI("https://mimiq.qperfect.io/api")
+
+"""
+  const DEFAULT_INTERVAL
+
+Default refresh interval for tokens (in seconds)
+"""
+const DEFAULT_INTERVAL = 15 * 60
+
+# headers to have request send json content
+const JSONHEADERS = ["Content-Type" => "application/json"]
+
+# include _download function (taken and modified from HTTP.jl to allow progress reporting)
+include("download.jl")
+
+"""
+    struct Tokens
+
+Store access and refresh tokens
+"""
+struct Tokens
+    accesstoken::String
+    refreshtoken::String
+end
+
+Tokens() = Tokens("", "")
+
+function Tokens(d::Dict)
+    Tokens(d["token"], d["refreshToken"])
+end
+
+function Tokens(dict::Dict{String, T}) where {T}
+    Tokens(dict["token"], dict["refreshToken"])
+end
+
+function Base.show(io::IO, tokens::Tokens)
+    compact = get(io, :compact, false)
+
+    if !compact
+        println(io, "Tokens:")
+        println(io, "├── access: ", tokens.accesstoken)
+        print(io, "└── refresh: ", tokens.refreshtoken)
+    else
+        print(io, "Tokens(\"$(tokens.accesstoken)\", \"$(tokens.refreshtoken)\")")
+    end
+
+    nothing
+end
+
+JSON.lower(t::Tokens) = Dict("token" => t.accesstoken, "refreshToken" => t.refreshtoken)
+
+"""
+  refresh(tokens, uri)
+
+Refresh the tokens at the given uri / instance of MIMIQ.
+"""
+function refresh(t::Tokens, uri::URI)
+    res = HTTP.post(
+        joinpath(uri, "access-token"),
+        JSONHEADERS,
+        JSON.json(Dict("refreshToken" => t.refreshtoken));
+        status_exception=false,
+    )
+
+    if HTTP.iserror(res)
+        error("Failed to refresh connection to MIMIQ, please try to connect again.")
+    end
+
+    resbody = JSON.parse(String(HTTP.payload(res)))
+
+    return Tokens(resbody["token"], resbody["refreshToken"])
+end
+
+"""
+    struct Connection
+
+Connection with the MIMIQ Services.
+
+# Attributes
+
+* `uri`: the URI of the connected instance
+* `tokens_channel`: channel updated with the latest refreshed token
+* `refresher`: task that refreshes the token on a configured interval
+"""
+struct Connection
+    uri::URI
+    tokens_channel::Channel{Tokens}
+    refresher::Task
+end
+
+function Connection(uri::URI, token::Tokens; interval=DEFAULT_INTERVAL)
+    ch = Channel{Tokens}(1)
+
+    put!(ch, token)
+
+    task = @async begin
+        try
+            while true
+                sleep(interval)
+
+                @debug "Refreshing tokens"
+
+                token = take!(ch)
+                newtoken = refresh(token, uri)
+
+                @debug "Received new token" newtoken
+
+                put!(ch, newtoken)
+            end
+        catch ex
+            if isa(ex, InterruptException)
+                @info "Gracefully shutting down token refresher"
+            else
+                put!(ch, Tokens())
+                @warn "Connection to MIMIQ services dropped."
+            end
+        end
+    end
+
+    return Connection(uri, ch, task)
+end
+
+function Base.show(io::IO, conn::Connection)
+    compact = get(io, :compact, false)
+
+    if !compact
+        status = istaskdone(conn.refresher) ? "closed" : "open"
+        println(io, "Connection:")
+        println(io, "├── url: ", conn.uri)
+        print(io, "└── status: ", status)
+    else
+        print(io, typeof(conn), "($(conn.uri)")
+    end
+
+    nothing
+end
+
+function remotelogin(uri::URI, email, password)
+    res = HTTP.post(
+        joinpath(uri, "sign-in"),
+        JSONHEADERS,
+        JSON.json(Dict("email" => email, "password" => password));
+        status_exception=false,
+    )
+    json_res = JSON.parse(String(HTTP.payload(res)))
+    if HTTP.iserror(res)
+        reason = json_res["message"]
+        error("Failed login with status code $(res.status) and reason: \"$reason\".")
+    end
+    Tokens(json_res)
+end
+
+function login(uri::URI, req::HTTP.Request, c::Condition)
+    data = JSON.parse(String(HTTP.payload(req)))
+
+    res = HTTP.post(
+        joinpath(uri, "sign-in"),
+        JSONHEADERS,
+        JSON.json(Dict("email" => data["email"], "password" => data["password"]));
+        status_exception=false,
+    )
+
+    json_res = JSON.parse(String(HTTP.payload(res)))
+
+    if HTTP.iserror(res)
+        reason = json_res["message"]
+        @warn "Failed with status code $(res.status) and reason: \"$reason\"."
+        return HTTP.Response(res.status, JSONHEADERS, JSON.json(json_res))
+    end
+
+    tokens = Tokens(json_res)
+    notify(c, tokens)
+
+    return HTTP.Response(
+        200,
+        JSONHEADERS,
+        JSON.json(Dict("message" => "Login successfull.")),
+    )
+end
+
+# from https://github.com/JuliaLang/julia/pull/36425
+function detectwsl()
+    Sys.islinux() &&
+        isfile("/proc/sys/kernel/osrelease") &&
+        occursin(r"Microsoft|WSL"i, read("/proc/sys/kernel/osrelease", String))
+end
+
+function open_in_default_browser(url::AbstractString)::Bool
+    try
+        if Sys.isapple()
+            Base.run(`open $url`)
+            true
+        elseif Sys.iswindows() || detectwsl()
+            Base.run(`powershell.exe Start "'$url'"`)
+            true
+        elseif Sys.islinux()
+            Base.run(`xdg-open $url`)
+            true
+        else
+            false
+        end
+    catch _
+        false
+    end
+end
+
+function fileserver(req::HTTP.Request)
+    requested_file = req.target == "/" ? "/index.html" : req.target
+
+    if isnothing(requested_file)
+        return HTTP.(403)
+    end
+
+    file = joinpath(@__DIR__, "..", "public", HTTP.unescapeuri(requested_file[2:end]))
+
+    extension = splitext(file)[2]
+    mime =
+        extension == ".js" ? "application/javascript" :
+        extension == ".html" ? "text/html" :
+        extension == ".css" ? "text/css" : try
+            matcher(file).mime
+        catch
+            ""
+        end
+
+    if isfile(file)
+        return HTTP.Response(200, ["Content-Type" => mime], read(file))
+    end
+
+    return HTTP.Response(404)
+end
+
+function gettoken(uri)
+    APIROUTER = HTTP.Router()
+
+    logged = Condition()
+
+    HTTP.register!(APIROUTER, "POST", "/api/login", req -> login(uri, req, logged))
+    HTTP.register!(APIROUTER, "GET", "/", fileserver)
+    HTTP.register!(APIROUTER, "GET", "/**", fileserver)
+
+    server = HTTP.serve!(APIROUTER, Sockets.localhost, 1444; listenany=true)
+
+    p = HTTP.port(server)
+    @info "Please login in your browser at http://127.0.0.1:$p"
+    open_in_default_browser("http://127.0.0.1:$p/")
+
+    tokens = wait(logged)
+
+    close(server)
+
+    return tokens
+end
+
+function savetoken(; uri::URI=QPERFECT_CLOUD)
+    tokens = gettoken(uri)
+    open("qperfect.json", "w") do io
+        JSON.print(io, Dict("url" => string(uri), "token" => tokens.refreshtoken))
+    end
+    @info "Token saved in `qperfect.json`"
+end
+
+function loadtoken(file::AbstractString)
+    dict = JSON.parsefile("qperfect.json")
+
+    if !haskey(dict, "url") || !haskey(dict, "token")
+        error("Malformed token file")
+    end
+
+    uri = URI(dict["url"])
+    @info "Loaded connection file to $uri"
+
+    return connect(dict["token"]; uri=uri)
+end
+
+"""
+    connect([; url=https://mimiq.qperfect.io])
+    connect(token[; url=https://mimiq.qperfect.io])
+    connect(username, password[; url=https://mimiq.qperfect.io])
+
+Establish a connection to the MIMIQ Services.
+
+A refresh process will be spawned in the background to refresh the access credentials.
+An active connection can be closed by using the `close(connection)` method. As an example:
+
+```julia
+connection = connect("john.doe@example.com", "johnspassword")
+close(connection)
+```
+
+!!! warning
+
+    The first method will open a login page in the default browser and ask for
+    your email and password. This method is encouraged, as it will avoid saving
+    your password as plain text in your scripts or notebooks.
+
+"""
+function connect end
+
+function connect(; uri::URI=QPERFECT_CLOUD, kwargs...)
+    tokens = gettoken(uri)
+    return Connection(uri, tokens; kwargs...)
+end
+
+function connect(token::AbstractString; uri::URI=QPERFECT_CLOUD, kwargs...)
+    @info "Obtaining access token for connection"
+    t = refresh(Tokens("", token), uri)
+    @info "Access token obtained. You should now be connected to MIMIQ Services."
+    return Connection(uri, t; kwargs...)
+end
+
+function connect(
+    email::AbstractString,
+    password::AbstractString;
+    uri::URI=QPERFECT_CLOUD,
+    kwargs...,
+)
+    @warn "This connection methods is discuraged. Please use `connect()`, `connect(url)` or `connect(token[, url])`, if possible."
+    t = remotelogin(uri, email, password)
+    return Connection(uri, t; kwargs...)
+end
+
+function Base.close(conn::Connection)
+    @info "Closing MIMIQ connection to $(conn.uri)"
+    schedule(conn.refresher, InterruptException(); error=true)
+end
+
+"""
+    struct Execution
+
+Structure referring to an execution on the MIMIQ Services.
+"""
+struct Execution
+    id::String
+end
+
+function Base.show(io::IO, ex::Execution)
+    compact = get(io, :compact, false)
+
+    if !compact
+        println(io, "Execution")
+        print(io, "└── ", ex.id)
+    else
+        print(io, typename(ex), "($(ex.id))")
+    end
+end
+
+# TODO: add support for progress bars when uploading files
+function request(conn::Connection, name, label, files...)
+    data = Pair{String, Any}["name" => name, "label" => label]
+
+    for file in files
+        if file isa AbstractString
+            push!(data, "uploads" => open(file, "r"))
+        else
+            push!(data, "uploads" => file)
+        end
+    end
+
+    body = HTTP.Form(data)
+    res = HTTP.post(joinpath(conn.uri, "request"), [_authheader(conn)], body)
+
+    res = JSON.parse(String(HTTP.payload(res)))
+    return Execution(res["executionRequestId"])
+end
+
+function requestinfo(conn::Connection, req::Execution)
+    uri = joinpath(conn.uri, "request", req.id)
+
+    res = HTTP.get(uri, [_authheader(conn)], "")
+
+    return JSON.parse(String(HTTP.payload(res)))
+end
+
+function isjobdone(conn::Connection, req::Execution)
+    infos = requestinfo(conn, req)
+    status = infos["status"]
+    return status == "DONE" || status == "ERROR"
+end
+
+function isjobfailed(conn::Connection, req::Execution)
+    infos = requestinfo(conn, req)
+    return infos["status"] == "ERROR"
+end
+
+function isjobstarted(conn::Connection, req::Execution)
+    infos = requestinfo(conn, req)
+    return infos["status"] != "NEW"
+end
+
+function _downloadfiles(conn, req, destdir, type)
+    @info "Downloading jobfiles in $destdir"
+
+    if !isdir(destdir)
+        mkdir(destdir)
+    end
+
+    infos = requestinfo(conn, req)
+    names = []
+
+    nf = get(infos, "numberOf$(type == :uploads ? "Uploaded" : "Resulted")Files", 0)
+
+    if nf == 0 || !(nf isa Number)
+        @warn "No files to download."
+        return names
+    end
+
+    for idx in 0:(nf - 1)
+        uri = URI(
+            joinpath(conn.uri, "files", req.id, string(idx));
+            query=Dict("source" => string(type)),
+        )
+        fname = _download(string(uri), destdir, [_authheader(conn)]; update_period=Inf)
+        push!(names, fname)
+    end
+
+    return names
+end
+
+function downloadjobfiles(conn::Connection, req::Execution, destdir=joinpath("./", req.id))
+    _downloadfiles(conn, req, destdir, :uploads)
+end
+
+function downloadresults(conn::Connection, req::Execution, destdir=joinpath("./", req.id))
+    _downloadfiles(conn, req, destdir, :results)
+end
+
+# Authentication header. To be used in function with
+# `headers = [_authheader(conn), "OtherHeader" => "headervalue", ...]`
+function _authheader(conn::Connection)
+    # fetch, not take!, otherwise next time we have to wait for a put! in the channel
+    tokens = fetch(conn.tokens_channel)
+    "Authorization" => "Bearer " * tokens.accesstoken
+end
+
+end # module MimiqLink

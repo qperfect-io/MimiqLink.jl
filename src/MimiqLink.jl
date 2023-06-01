@@ -351,16 +351,62 @@ function gettoken(uri)
     return tokens
 end
 
-function savetoken(; uri::URI=QPERFECT_CLOUD)
+"""
+    savetoken([filename][; uri="https://mimiq.qperfect.io/api"])
+
+Establish a connection to the MIMIQ Services and save the credentials
+in a JSON file.
+
+# Arguments
+
+* `filename`: file where to save the credentials (default: `qperfect.json`)
+
+# Keyword arguments
+
+* `uri`: the uri of the MIMIQ Services (default: `https://mimiq.qperfect.io/api`)
+
+# Example
+
+```
+julia> savetoken("myqperfectcredentials.json")
+
+julia> connection = loadtoken("myqperfectcredentials.json")
+
+```
+"""
+function savetoken(filename::AbstractString="qperfect.json"; uri::URI=QPERFECT_CLOUD)
     tokens = gettoken(uri)
-    open("qperfect.json", "w") do io
+    open(filename, "w") do io
         JSON.print(io, Dict("url" => string(uri), "token" => tokens.refreshtoken))
     end
-    @info "Token saved in `qperfect.json`"
+    @info "Token saved in `$(filename)`"
 end
 
-function loadtoken(file::AbstractString)
-    dict = JSON.parsefile("qperfect.json")
+"""
+    loadtoken([filename])
+
+Establish a connection to the MIMIQ Services by loading the credentials from a
+JSON file.
+
+# Arguments
+
+* `filename`: file where to load the credentials (default: `qperfect.json`)
+
+!!! note
+The credentials are usually valid only for a small amount of time, so you may
+need to regenerate them from time to time.
+
+# Example
+
+```
+julia> savetoken("myqperfectcredentials.json")
+
+julia> connection = loadtoken("myqperfectcredentials.json")
+
+```
+"""
+function loadtoken(filename::AbstractString="qperfect.json")
+    dict = JSON.parsefile(filename)
 
     if !haskey(dict, "url") || !haskey(dict, "token")
         error("Malformed token file")

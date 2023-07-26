@@ -490,9 +490,46 @@ function Base.show(io::IO, ex::Execution)
     end
 end
 
+function _checkresponse(res::HTTP.Response, prefix="Error")
+    if res.status < 300
+        return nothing
+    end
+
+    if isempty(HTTP.payload(res))
+        error("$prefix: Server responded with code $(res.status).")
+    end
+
+    json = JSON.parse(String(HTTP.payload(res)))
+
+    if haskey(json, "message")
+        message = json["message"]
+        error(lazy"$(prefix): $(message)")
+    else
+        error("$prefix: Server responded with code $(res.status).")
+    end
+
+    return nothing
+end
+
 # TODO: add support for progress bars when uploading files
-function request(conn::Connection, name, label, files...)
-    data = Pair{String, Any}["name" => name, "label" => label]
+function request(
+    conn::Connection,
+    emulatortype::AbstractString,
+    name::AbstractString,
+    label::AbstractString,
+    timeout::Integer,
+    files...,
+)
+    if timeout <= 0
+        throw(ArgumentError("Timeout must be a positive integer"))
+    end
+
+    data = Pair{String, Any}[
+        "name" => name,
+        "label" => label,
+        "emulatorType" => emulatortype,
+        "timeout" => string(timeout),
+    ]
 
     for file in files
         if file isa AbstractString
@@ -503,16 +540,36 @@ function request(conn::Connection, name, label, files...)
     end
 
     body = HTTP.Form(data)
-    res = HTTP.post(joinpath(conn.uri, "request"), [_authheader(conn)], body)
+
+    res = HTTP.post(
+        joinpath(conn.uri, "request"),
+        [_authheader(conn)],
+        body;
+        status_exception=false,
+    )
+
+    _checkresponse(res, "Error creating execution request")
 
     res = JSON.parse(String(HTTP.payload(res)))
     return Execution(res["executionRequestId"])
+end
+
+function stopexecution(conn::Connection, req::Execution)
+    uri = joinpath(conn.uri, "request", "stop-execution", req.id)
+
+    res = HTTP.post(uri, [_authheader(conn)], ""; status_exception=false)
+
+    _checkresponse(res, "Error stopping execution")
+
+    return true
 end
 
 function requestinfo(conn::Connection, req::Execution)
     uri = joinpath(conn.uri, "request", req.id)
 
     res = HTTP.get(uri, [_authheader(conn)], "")
+
+    _checkresponse(res, "Error retrieving execution information")
 
     return JSON.parse(String(HTTP.payload(res)))
 end
@@ -534,7 +591,7 @@ function isjobstarted(conn::Connection, req::Execution)
 end
 
 function _downloadfiles(conn, req, destdir, type)
-    @info "Downloading jobfiles in $destdir"
+    @debug "Downloading jobfiles in $destdir"
 
     if !isdir(destdir)
         mkdir(destdir)

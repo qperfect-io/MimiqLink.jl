@@ -92,6 +92,8 @@ using ProgressLogging
 # A Connection object will contain all the information required to send requests with the request(...) function.
 # The user can close the connection, shutting down the automatic refresher, by using the close(...) function.
 
+include("utils.jl")
+
 """
    const QPERFECT_CLOUD
 
@@ -352,7 +354,7 @@ function gettoken(uri)
 end
 
 """
-    savetoken([filename][; uri="https://mimiq.qperfect.io/api"])
+    savetoken([filename][; url="https://mimiq.qperfect.io/api"])
 
 Establish a connection to the MIMIQ Services and save the credentials
 in a JSON file.
@@ -374,7 +376,8 @@ julia> connection = loadtoken("myqperfectcredentials.json")
 
 ```
 """
-function savetoken(filename::AbstractString="qperfect.json"; uri::URI=QPERFECT_CLOUD)
+function savetoken(filename::AbstractString="qperfect.json"; url=QPERFECT_CLOUD)
+    uri = _url_to_uri(url)
     tokens = gettoken(uri)
     open(filename, "w") do io
         JSON.print(io, Dict("url" => string(uri), "token" => tokens.refreshtoken))
@@ -442,12 +445,14 @@ close(connection)
 """
 function connect end
 
-function connect(; uri::URI=QPERFECT_CLOUD, kwargs...)
+function connect(; url=QPERFECT_CLOUD, kwargs...)
+    uri = _url_to_uri(url)
     tokens = gettoken(uri)
     return Connection(uri, tokens; kwargs...)
 end
 
-function connect(token::AbstractString; uri::URI=QPERFECT_CLOUD, kwargs...)
+function connect(token::AbstractString; url=QPERFECT_CLOUD, kwargs...)
+    uri = _url_to_uri(url)
     @info "Obtaining access token for connection"
     t = refresh(Tokens("", token), uri)
     @info "Access token obtained. You should now be connected to MIMIQ Services."
@@ -457,9 +462,10 @@ end
 function connect(
     email::AbstractString,
     password::AbstractString;
-    uri::URI=QPERFECT_CLOUD,
+    url=QPERFECT_CLOUD,
     kwargs...,
 )
+    uri = _url_to_uri(url)
     @warn "This connection methods is discuraged. Please use `connect()`, `connect(url)` or `connect(token[, url])`, if possible."
     t = remotelogin(uri, email, password)
     return Connection(uri, t; kwargs...)

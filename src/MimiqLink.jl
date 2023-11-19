@@ -20,11 +20,13 @@
 This module contains convenience tools to establish and keep up a connection
 to the QPerfect MIMIQ services, both remote or on premises.
 
-It allows for three different connection modes: via login page, via token, via credentials
+It allows for three different connection modes: via login page, via token, via
+credentials.
 
 ## Login Page
 
-This method will open a browser pointing to a login page. The user will be asked to insert username/email and password.
+This method will open a browser pointing to a login page. The user will be asked
+to insert username/email and password.
 
 ```
 julia> using MimiqLink
@@ -35,17 +37,18 @@ julia> connection = MimiqLink.connect()
 optionally an address for the MIMIQ services can be specified
 
 ```
-julia> connection = MimiqLink.connect(uri = "http://127.0.0.1/api")
+julia> connection = MimiqLink.connect(url = "http://127.0.0.1/api")
 ```
 
 ## Token
 
-This method will allow the user to save a token file (by login via a login page), and then load it also from another julia session.
+This method will allow the user to save a token file (by login via a login
+page), and then load it also from another julia session.
 
 ```
 julia> using MimiqLink
 
-julia> MimiqLink.savetoken(uri = "http://127.0.0.1/api")
+julia> MimiqLink.savetoken(url = "http://127.0.0.1/api")
 ```
 
 this will save a token in the `qperfect.json` file in the current directory.
@@ -61,7 +64,9 @@ julia> connection = MimiqLink.loadtoken("path/to/my/qperfect.json")
 
 This method will allow users to access by directly use their own credentials.
 
-**WARNING** it is strongly discuraged to use this method. If files with credentials will be shared the access to the qperfect account might be compromised.
+!!! warning
+    It is strongly discuraged to use this method. If files with credentials will
+    be shared the access to the qperfect account might be compromised.
 
 ```
 julia> using MimiqLink
@@ -70,18 +75,30 @@ julia> connection = MimiqLink.connect("me@mymail.com", "myweakpassword")
 ```
 
 ```
-julia> MimiqLink.connect("me@mymail.com", "myweakpassword"; uri = "http://127.0.0.1/api")
+julia> MimiqLink.connect("me@mymail.com", "myweakpassword"; url = "http://127.0.0.1/api")
 ```
 """
 module MimiqLink
 
-using Base: typename
 using FileTypes
 using HTTP
 using Sockets
 using JSON
 using URIs
 using ProgressLogging
+
+export connect
+export loadtoken
+export savetoken
+export request
+export requestinfo
+export isjobdone
+export isjobfailed
+export isjobstarted
+export downloadresults
+export downloadjobfiles
+export QPERFECT_CLOUD
+export QPERFECT_CLOUD2
 
 # How does the library works?
 # When using connect() the library will spawn a little file server that will serve the files contained in the /public folder.
@@ -97,9 +114,16 @@ include("utils.jl")
 """
    const QPERFECT_CLOUD
 
-Fallback address for the QPerfect Cloud services
+Address for the QPerfect Cloud services
 """
 const QPERFECT_CLOUD = URI("https://mimiq.qperfect.io/api")
+
+"""
+   const QPERFECT_CLOUD2
+
+Addressfor secondary QPerfect Cloud services
+"""
+const QPERFECT_CLOUD2 = URI("https://mimiqfast.qperfect.io/api")
 
 """
   const DEFAULT_INTERVAL
@@ -354,22 +378,22 @@ function gettoken(uri)
 end
 
 """
-    savetoken([filename][; url="https://mimiq.qperfect.io/api"])
+    savetoken([filename][; url=QPERFECT_CLOUD)
 
 Establish a connection to the MIMIQ Services and save the credentials
 in a JSON file.
 
-# Arguments
+## Arguments
 
 * `filename`: file where to save the credentials (default: `qperfect.json`)
 
-# Keyword arguments
+## Keyword arguments
 
-* `uri`: the uri of the MIMIQ Services (default: `https://mimiq.qperfect.io/api`)
+* `url`: the uri of the MIMIQ Services (default: `QPERFECT_CLOUD` value)
 
-# Example
+## Examples
 
-```
+```julia
 julia> savetoken("myqperfectcredentials.json")
 
 julia> connection = loadtoken("myqperfectcredentials.json")
@@ -380,7 +404,7 @@ function savetoken(filename::AbstractString="qperfect.json"; url=QPERFECT_CLOUD)
     uri = _url_to_uri(url)
     tokens = gettoken(uri)
     open(filename, "w") do io
-        JSON.print(io, Dict("url" => string(uri), "token" => tokens.refreshtoken))
+        JSON.print(io, Dict("url" => string(url), "token" => tokens.refreshtoken))
     end
     @info "Token saved in `$(filename)`"
 end
@@ -391,7 +415,7 @@ end
 Establish a connection to the MIMIQ Services by loading the credentials from a
 JSON file.
 
-# Arguments
+## Arguments
 
 * `filename`: file where to load the credentials (default: `qperfect.json`)
 
@@ -399,7 +423,7 @@ JSON file.
 The credentials are usually valid only for a small amount of time, so you may
 need to regenerate them from time to time.
 
-# Example
+## Examples
 
 ```
 julia> savetoken("myqperfectcredentials.json")
@@ -415,16 +439,16 @@ function loadtoken(filename::AbstractString="qperfect.json")
         error("Malformed token file")
     end
 
-    uri = URI(dict["url"])
-    @info "Loaded connection file to $uri"
+    url = URI(dict["url"])
+    @info "Loaded connection file to $url"
 
-    return connect(dict["token"]; uri=uri)
+    return connect(dict["token"]; url=url)
 end
 
 """
-    connect([; url=https://mimiq.qperfect.io])
-    connect(token[; url=https://mimiq.qperfect.io])
-    connect(username, password[; url=https://mimiq.qperfect.io])
+    connect([; url=QPREFECT_CLOUD])
+    connect(token[; url=QPREFECT_CLOUD])
+    connect(username, password[; url=QPREFECT_CLOUD])
 
 Establish a connection to the MIMIQ Services.
 
@@ -441,6 +465,17 @@ close(connection)
     The first method will open a login page in the default browser and ask for
     your email and password. This method is encouraged, as it will avoid saving
     your password as plain text in your scripts or notebooks.
+
+There are two main servers for the MIMIQ Services: the main one and a secondary one.
+Users are supposed to use the main one.
+
+```jldoctests
+julia> QPERFECT_CLOUD
+URI("https://mimiq.qperfect.io/api")
+
+julia> QPERFECT_CLOUD2
+URI("https://mimiqfast.qperfect.io/api")
+```
 
 """
 function connect end
@@ -492,7 +527,7 @@ function Base.show(io::IO, ex::Execution)
         println(io, "Execution")
         print(io, "└── ", ex.id)
     else
-        print(io, typename(ex), "($(ex.id))")
+        print(io, Base.typename(ex), "($(ex.id))")
     end
 end
 
@@ -511,7 +546,7 @@ function _checkresponse(res::HTTP.Response, prefix="Error")
         message = json["message"]
         error(lazy"$(prefix): $(message)")
     else
-        error("$prefix: Server responded with code $(res.status).")
+        error(lazy"$prefix: Server responded with code $(res.status).")
     end
 
     return nothing

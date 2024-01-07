@@ -619,7 +619,7 @@ end
 function isjobdone(conn::Connection, req::Execution)
     infos = requestinfo(conn, req)
     status = infos["status"]
-    return status != "NEW" || status != "RUNNING"
+    return status != "NEW" && status != "RUNNING"
 end
 
 function isjobfailed(conn::Connection, req::Execution)

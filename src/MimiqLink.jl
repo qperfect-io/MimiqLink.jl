@@ -95,6 +95,7 @@ export requestinfo
 export isjobdone
 export isjobfailed
 export isjobstarted
+export isjobcanceled
 export downloadresults
 export downloadjobfiles
 export QPERFECT_CLOUD
@@ -618,7 +619,7 @@ end
 function isjobdone(conn::Connection, req::Execution)
     infos = requestinfo(conn, req)
     status = infos["status"]
-    return status == "DONE" || status == "ERROR"
+    return status != "NEW" || status != "RUNNING"
 end
 
 function isjobfailed(conn::Connection, req::Execution)
@@ -629,6 +630,11 @@ end
 function isjobstarted(conn::Connection, req::Execution)
     infos = requestinfo(conn, req)
     return infos["status"] != "NEW"
+end
+
+function isjobcanceled(conn::Connection, req::Execution)
+    infos = requestinfo(conn, req)
+    return infos["status"] == "CANCELED"
 end
 
 function _downloadfiles(conn, req, destdir, type)

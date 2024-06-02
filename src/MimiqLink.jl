@@ -596,16 +596,105 @@ function request(
     return Execution(res["executionRequestId"])
 end
 
+"""
+    stopexecution(conn, req)
+
+Stop the execution of a request.
+"""
 function stopexecution(conn::Connection, req::Execution)
-    uri = joinpath(conn.uri, "request", "stop-execution", req.id)
-
+    uri = joinpath(conn.uri, "stop-execution", req.id)
     res = HTTP.post(uri, [_authheader(conn)], ""; status_exception=false)
-
     _checkresponse(res, "Error stopping execution")
-
     return true
 end
 
+"""
+    deletefiles(conn, req)"
+
+Delete the files associated with a request.
+"""
+function deletefiles(conn::Connection, req::Execution)
+    uri = joinpath(conn.uri, "delete-files", req.id)
+    res = HTTP.post(uri, [_authheader(conn)], ""; status_exception=false)
+    _checkresponse(res, "Error deleting files")
+    return true
+end
+
+"""
+    requests(conn; kwargs...)
+
+Retrieve the list of requests on the MIMIQ Cloud Services.
+
+!!! note
+    It is only possible to retrieve the requests that the user has permissions
+    to see.
+    This is often limited to the requests that the user has created, for normal
+    users, and to all organization requests, for organization administrators.
+
+## Keyword arguments
+
+* `status`: filter by status. Can be `NEW`, `RUNNING`, `ERROR`, `CANCELED`, `DONE`.
+* `userEmail`: filter by user email.
+* `limit`: limit the number of requests to retrieve. Can be [10, 50, 100, 200].
+* `page`: page number to retrieve.
+"""
+function requests(conn::Connection; kwargs...)
+    uri = URI(joinpath(conn.uri, "request"); query=Dict(kwargs...))
+    res = HTTP.get(uri, [_authheader(conn)], ""; status_exception=false)
+    _checkresponse(res, "Error retrieving requests")
+    res = JSON.parse(String(HTTP.payload(res)))
+
+    return res["executions"]["docs"]
+end
+
+"""
+    printrequests(conn; kwargs...)
+
+Print the list of requests on the MIMIQ Cloud Services.
+
+## Keyword arguments
+
+* `status`: filter by status. Can be `NEW`, `RUNNING`, `ERROR`, `CANCELED`, `DONE`.
+* `userEmail`: filter by user email.
+* `limit`: limit the number of requests to retrieve. Can be [10, 50, 100, 200].
+* `page`: page number to retrieve.
+"""
+function printrequests(conn::Connection; kwargs...)
+    reqs = requests(conn; kwargs...)
+
+    numrunning = count(x -> x["status"] == "RUNNING", reqs)
+    numnew = count(x -> x["status"] == "NEW", reqs)
+
+    println("$(length(reqs)) jobs of which $(numnew) NEW and $(numrunning) RUNNING:")
+
+    for req in reqs[1:(end - 1)]
+        println("├── Request $(req["_id"])")
+        println("│   ├── Name: $(req["name"])")
+        println("│   ├── Label: $(req["label"])")
+        println("│   ├── Status: $(req["status"])")
+        println("│   ├── User Email: $(req["user"]["email"])")
+        println("│   ├── Created Date: $(req["creationDate"])")
+        println("│   ├── Running Date: $(get(req, "runningDate", "None"))")
+        println("│   └── Done Date: $(get(req, "doneDate", "None"))")
+    end
+
+    let req = reqs[end]
+        println("└── Request $(req["_id"])")
+        println("    ├── Name: $(req["name"])")
+        println("    ├── Label: $(req["label"])")
+        println("    ├── Status: $(req["status"])")
+        println("    ├── User Email: $(req["user"]["email"])")
+        println("    ├── Created Date: $(req["creationDate"])")
+        println("    ├── Running Date: $(get(req, "runningDate", "None"))")
+        println("    └── Done Date: $(get(req, "doneDate", "None"))")
+    end
+end
+
+"""
+    requestinfo(conn, req)
+
+Retrieve information about an execution request.
+"""
 function requestinfo(conn::Connection, req::Execution)
     uri = joinpath(conn.uri, "request", req.id)
 
@@ -616,22 +705,44 @@ function requestinfo(conn::Connection, req::Execution)
     return JSON.parse(String(HTTP.payload(res)))
 end
 
+"""
+    isjobdone(conn, execution)
+
+Check if a job is done.
+
+Will return `true` if the job finished successfully or with an error and `false` otherwise.
+"""
 function isjobdone(conn::Connection, req::Execution)
     infos = requestinfo(conn, req)
     status = infos["status"]
     return status != "NEW" && status != "RUNNING"
 end
 
+"""
+    isjobfailed(conn, execution)
+
+Check if a job failed.
+"""
 function isjobfailed(conn::Connection, req::Execution)
     infos = requestinfo(conn, req)
     return infos["status"] == "ERROR"
 end
 
+"""
+    isjobstarted(conn, execution)
+
+Check if a job has started executing.
+"""
 function isjobstarted(conn::Connection, req::Execution)
     infos = requestinfo(conn, req)
     return infos["status"] != "NEW"
 end
 
+"""
+    isjobcanceled(conn, execution)
+
+Check if a job has been canceled.
+"""
 function isjobcanceled(conn::Connection, req::Execution)
     infos = requestinfo(conn, req)
     return infos["status"] == "CANCELED"

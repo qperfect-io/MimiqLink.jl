@@ -1,5 +1,5 @@
 #
-# Copyright © 2022-2023 University of Strasbourg. All Rights Reserved.
+# Copyright © 2022-2024 University of Strasbourg. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -211,13 +211,20 @@ Connection with the MIMIQ Services.
 struct Connection
     uri::URI
     tokens_channel::Channel{Tokens}
+    userlimits_channel::Channel{Dict{String, Any}}
     refresher::Task
 end
 
 function Connection(uri::URI, token::Tokens; interval=DEFAULT_INTERVAL)
     ch = Channel{Tokens}(1)
+    ch_limits = Channel{Dict{String, Any}}(1)
 
     put!(ch, token)
+
+    let limits = userlimits(uri, token)
+        put!(ch_limits, limits)
+        checklimits(limits)
+    end
 
     task = @async begin
         try
@@ -232,18 +239,48 @@ function Connection(uri::URI, token::Tokens; interval=DEFAULT_INTERVAL)
                 @debug "Received new token" newtoken
 
                 put!(ch, newtoken)
+
+                @debug "Refreshing user limits"
+
+                take!(ch_limits)
+                limits = userlimits(uri, newtoken)
+
+                @debug "Received new limits" limits
+
+                checklimits(limits)
+                put!(ch_limits, limits)
             end
         catch ex
             if isa(ex, InterruptException)
                 @info "Gracefully shutting down token refresher"
             else
                 put!(ch, Tokens())
+                put!(ch_limits, Dict())
                 @warn "Connection to MIMIQ services dropped."
             end
         end
     end
 
-    return Connection(uri, ch, task)
+    return Connection(uri, ch, ch_limits, task)
+end
+
+function checklimits(limits::Dict)
+    if limits["enabledExecutionTime"]
+        usedtime = round(Int, limits["usedExecutionTime"] / 60)
+        maxtime = round(Int, limits["maxExecutionTime"] / 60)
+
+        if usedtime > maxtime
+            @warn "You exceeded your computing time limit of $maxtime minutes"
+        end
+    end
+
+    if limits["enabledMaxExecutions"]
+        usedexec = limits["usedExecutions"]
+        maxexec = limits["maxExecutions"]
+        if usedexec > maxexec
+            @warn "You exceeded your number of executions limit of $maxexec"
+        end
+    end
 end
 
 function Base.show(io::IO, conn::Connection)
@@ -253,12 +290,62 @@ function Base.show(io::IO, conn::Connection)
         status = istaskdone(conn.refresher) ? "closed" : "open"
         println(io, "Connection:")
         println(io, "├── url: ", conn.uri)
+
+        limits = fetch(conn.userlimits_channel)
+        if limits["enabledMaxExecutions"]
+            println(
+                io,
+                "├── executions: ",
+                limits["usedExecutions"],
+                "/",
+                limits["maxExecutions"],
+            )
+        end
+        if limits["enabledExecutionTime"]
+            println(
+                io,
+                "├── computing time: ",
+                round(Int, limits["usedExecutionTime"] / 60),
+                "/",
+                round(Int, limits["maxExecutionTime"] / 60),
+                " minutes",
+            )
+        end
+        if limits["enabledMaxTimeout"]
+            println(
+                io,
+                "├── max time limit: ",
+                round(Int, limits["maxTimeout"]),
+                " minutes",
+            )
+        end
         print(io, "└── status: ", status)
+
     else
         print(io, typeof(conn), "($(conn.uri)")
     end
 
     nothing
+end
+
+function userlimits(uri::URI, tokens::Tokens)
+    res = HTTP.get(
+        joinpath(uri, "users/limits"),
+        ["Authorization" => "Bearer " * tokens.accesstoken],
+        "",
+        status_exception=false,
+    )
+    json_res = JSON.parse(String(HTTP.payload(res)))
+
+
+    if HTTP.iserror(res)
+        reason = json_res["message"]
+        error(
+            "Failed to request user data with status code $(res.status) and reason: \"$reason\".",
+        )
+    end
+
+    return json_res
 end
 
 function remotelogin(uri::URI, email, password)

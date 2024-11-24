@@ -312,12 +312,12 @@ function Base.show(io::IO, conn::Connection)
             )
         end
         if limits["enabledMaxTimeout"]
-            println(
-                io,
-                "├── max time limit: ",
-                round(Int, limits["maxTimeout"]),
-                " minutes",
-            )
+            maxtimeout = round(Int, limits["maxTimeout"])
+            println(io, "├── max time limit: ", maxtimeout, " minutes")
+            println(io, "├── Default time limit is equal to max time limit: ", maxtimeout, " minutes")
+        else
+            println(io, "├── Max time limit is: Infinite")
+            println(io, "├── Default time limit is: 30 minutes")
         end
         print(io, "└── status: ", status)
 
@@ -608,7 +608,10 @@ struct Execution
     id::String
 end
 
-function Base.show(io::IO, ex::Execution)
+Base.String(ex::Execution) = ex.id
+Base.string(ex::Execution) = ex.id
+
+function Base.show(io::IO, ::MIME"text/plain", ex::Execution)
     compact = get(io, :compact, false)
 
     if !compact

@@ -17,4 +17,23 @@
 _url_to_uri(url::AbstractString) = URI(url)
 _url_to_uri(url::URI) = url
 
+function _checkresponse(res::HTTP.Response, prefix="Error")
+    if res.status < 300
+        return nothing
+    end
 
+    if isempty(HTTP.payload(res))
+        error("$prefix: Server responded with code $(res.status).")
+    end
+
+    json = JSON.parse(String(HTTP.payload(res)))
+
+    if haskey(json, "message")
+        message = json["message"]
+        error(lazy"$(prefix): $(message)")
+    else
+        error(lazy"$prefix: Server responded with code $(res.status).")
+    end
+
+    return nothing
+end

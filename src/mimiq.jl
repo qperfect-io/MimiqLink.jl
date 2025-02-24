@@ -231,7 +231,7 @@ end
 
 function remotelogin(uri::URI, email, password)
     res = HTTP.post(
-        joinpath(uri, "sign-in"),
+        geturi(MimiqConnection, uri, "sign-in"),
         JSONHEADERS,
         JSON.json(Dict("email" => email, "password" => password));
         status_exception=false,

@@ -254,8 +254,6 @@ function login(uri::URI, req::HTTP.Request, c::Condition)
         status_exception=false,
     )
 
-    @show res
-
     json_res = JSON.parse(String(HTTP.payload(res)))
 
     if HTTP.iserror(res)

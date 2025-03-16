@@ -37,7 +37,7 @@ julia> connection = MimiqLink.connect()
 optionally an address for the MIMIQ services can be specified
 
 ```
-julia> connection = MimiqLink.connect(url = "http://127.0.0.1/api")
+julia> connection = MimiqLink.connect(url = "http://127.0.0.1")
 ```
 
 ## Token
@@ -48,7 +48,7 @@ page), and then load it also from another julia session.
 ```
 julia> using MimiqLink
 
-julia> MimiqLink.savetoken(url = "http://127.0.0.1/api")
+julia> MimiqLink.savetoken(url = "http://127.0.0.1")
 ```
 
 this will save a token in the `qperfect.json` file in the current directory.
@@ -75,7 +75,7 @@ julia> connection = MimiqLink.connect("me@mymail.com", "myweakpassword")
 ```
 
 ```
-julia> MimiqLink.connect("me@mymail.com", "myweakpassword"; url = "http://127.0.0.1/api")
+julia> MimiqLink.connect("me@mymail.com", "myweakpassword"; url = "http://127.0.0.1")
 ```
 """
 module MimiqLink
@@ -100,6 +100,7 @@ export isjobcanceled
 export downloadresults
 export downloadjobfiles
 export QPERFECT_CLOUD
+export QPERFECT_DEV
 
 export AbstractConnection
 export MimiqConnection
@@ -204,10 +205,10 @@ Users are supposed to use the main one.
 
 ```jldoctests
 julia> QPERFECT_CLOUD
-URI("https://mimiq.qperfect.io/api")
+URI("https://mimiq.qperfect.io")
 
 julia> QPERFECT_DEV
-URI("https://mimiqfast.qperfect.io/api")
+URI("https://mimiqfast.qperfect.io")
 ```
 """
 function connect end

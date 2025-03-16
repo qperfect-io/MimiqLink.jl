@@ -1,7 +1,7 @@
 name = "MimiqLink"
 uuid = "75412a89-3e23-4d98-b652-ed58604dd601"
 authors = ["Guido Masella <guido.masella@qperfect.io>"]
-version = "0.10.1"
+version = "0.10.2"
 
 [deps]
 Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"

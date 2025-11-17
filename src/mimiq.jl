@@ -232,7 +232,7 @@ function userlimits(uri::URI, tokens::Tokens)
         "",
         status_exception=false,
     )
-    json_res = JSON.parse(String(HTTP.payload(res)))
+    json_res = Dict{String,Any}(JSON.parse(String(HTTP.payload(res))))
 
 
     if HTTP.iserror(res)
@@ -252,7 +252,7 @@ function remotelogin(uri::URI, email, password)
         JSON.json(Dict("email" => email, "password" => password));
         status_exception=false,
     )
-    json_res = JSON.parse(String(HTTP.payload(res)))
+    json_res = Dict{String,Any}(JSON.parse(String(HTTP.payload(res))))
     if HTTP.iserror(res)
         reason = json_res["message"]
         error("Failed login with status code $(res.status) and reason: \"$reason\".")
@@ -270,7 +270,7 @@ function login(uri::URI, req::HTTP.Request, c::Condition)
         status_exception=false,
     )
 
-    json_res = JSON.parse(String(HTTP.payload(res)))
+    json_res = Dict{String,Any}(JSON.parse(String(HTTP.payload(res))))
 
     if HTTP.iserror(res)
         reason = json_res["message"]

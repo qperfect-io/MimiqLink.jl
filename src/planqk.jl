@@ -62,6 +62,11 @@ function get_planqk_token(consumer_key::String, consumer_secret::String)
     )
 end
 
+"""
+    PlanqkConnection
+
+Represents a connection to the PlanQK API.
+"""
 struct PlanqkConnection <: AbstractConnection
     uri::URI
     token_channel::Channel{JWTtoken}

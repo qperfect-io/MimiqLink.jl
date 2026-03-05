@@ -98,8 +98,8 @@ function PlanqkConnection(endpoint::URI, consumer_key::String, consumer_secret::
             if isa(ex, InterruptException)
                 @info "Gracefully shutting down token refresher"
             else
-                put!(ch, "")
-                @warn "Connection to MIMIQ services dropped."
+                put!(ch, JWTtoken("", "", "", 0))
+                @error "Connection to MIMIQ services dropped." exception=(ex, catch_backtrace())
             end
         end
     end

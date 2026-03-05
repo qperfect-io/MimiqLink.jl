@@ -56,12 +56,16 @@ JSON.lower(t::Tokens) = Dict("token" => t.accesstoken, "refreshToken" => t.refre
 Refresh the tokens at the given uri / instance of MIMIQ.
 """
 function refresh(t::Tokens, uri::URI)
+    @debug "Refreshing tokens for MIMIQ connection at $(uri)"
     res = HTTP.post(
         geturi(MimiqConnection, uri, "access-token"),
         JSONHEADERS,
         JSON.json(Dict("refreshToken" => t.refreshtoken));
         status_exception=false,
     )
+
+    @debug "Refresh response" response = res status = res.status headers = res.headers body =
+        String(HTTP.payload(res))
 
     if HTTP.iserror(res)
         error("Failed to refresh connection to MIMIQ, please try to connect again.")
@@ -103,25 +107,31 @@ function MimiqConnection(uri::URI, token::Tokens; interval=DEFAULT_INTERVAL)
     task = @async begin
         try
             while true
+                @debug "Waiting for $(interval) seconds before refreshing tokens"
                 sleep(interval)
 
                 @debug "Refreshing tokens"
 
-                token = take!(ch)
-                newtoken = refresh(token, geturi(uri))
+                # Use fetch to avoid blocking other readers (authheader) while refreshing
+                token = fetch(ch)
+                newtoken = refresh(token, geturi(MimiqConnection, uri))
 
                 @debug "Received new token" newtoken
 
+                # Atomic update of the channel
+                take!(ch)
                 put!(ch, newtoken)
 
                 @debug "Refreshing user limits"
 
-                take!(ch_limits)
                 limits = userlimits(uri, newtoken)
 
                 @debug "Received new limits" limits
 
                 checklimits(limits)
+                
+                # Atomic update of the limits channel
+                take!(ch_limits)
                 put!(ch_limits, limits)
             end
         catch ex
@@ -130,7 +140,8 @@ function MimiqConnection(uri::URI, token::Tokens; interval=DEFAULT_INTERVAL)
             else
                 put!(ch, Tokens())
                 put!(ch_limits, Dict())
-                @warn "Connection to MIMIQ services dropped."
+                @error "Connection to MIMIQ services dropped." exception =
+                    (ex, catch_backtrace())
             end
         end
     end
@@ -232,7 +243,7 @@ function userlimits(uri::URI, tokens::Tokens)
         "",
         status_exception=false,
     )
-    json_res = Dict{String,Any}(JSON.parse(String(HTTP.payload(res))))
+    json_res = Dict{String, Any}(JSON.parse(String(HTTP.payload(res))))
 
 
     if HTTP.iserror(res)
@@ -252,7 +263,7 @@ function remotelogin(uri::URI, email, password)
         JSON.json(Dict("email" => email, "password" => password));
         status_exception=false,
     )
-    json_res = Dict{String,Any}(JSON.parse(String(HTTP.payload(res))))
+    json_res = Dict{String, Any}(JSON.parse(String(HTTP.payload(res))))
     if HTTP.iserror(res)
         reason = json_res["message"]
         error("Failed login with status code $(res.status) and reason: \"$reason\".")
@@ -270,7 +281,7 @@ function login(uri::URI, req::HTTP.Request, c::Condition)
         status_exception=false,
     )
 
-    json_res = Dict{String,Any}(JSON.parse(String(HTTP.payload(res))))
+    json_res = Dict{String, Any}(JSON.parse(String(HTTP.payload(res))))
 
     if HTTP.iserror(res)
         reason = json_res["message"]

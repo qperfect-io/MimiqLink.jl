@@ -257,6 +257,9 @@ end
     stopexecution(conn, req)
 
 Stop the execution of a request.
+
+If the job is `NEW`, it will be immediately canceled. If it is `RUNNING`,
+a stop signal will be sent to the executor.
 """
 function stopexecution(conn::AbstractConnection, req::Execution)
     uri = geturi(conn, "stop-execution", req.id)
@@ -266,9 +269,9 @@ function stopexecution(conn::AbstractConnection, req::Execution)
 end
 
 """
-    deletefiles(conn, req)"
+    deletefiles(conn, req)
 
-Delete the files associated with a request.
+Delete the uploaded and result files associated with a request.
 """
 function deletefiles(conn::AbstractConnection, req::Execution)
     uri = geturi(conn, "delete-files", req.id)
@@ -324,6 +327,10 @@ function printrequests(conn::AbstractConnection; kwargs...)
 
     println("$(length(reqs)) jobs of which $(numnew) NEW and $(numrunning) RUNNING:")
 
+    if isempty(reqs)
+        return nothing
+    end
+
     for req in reqs[1:(end - 1)]
         println("├── Request $(req["_id"])")
         println("│   ├── Name: $(req["name"])")
@@ -367,7 +374,8 @@ end
 
 Check if a job is done.
 
-Will return `true` if the job finished successfully or with an error and `false` otherwise.
+Will return `true` if the job finished successfully, with an error, or was canceled,
+and `false` otherwise.
 """
 function isjobdone(conn::AbstractConnection, req::Execution)
     infos = requestinfo(conn, req)
@@ -434,6 +442,17 @@ function _downloadfiles(conn::AbstractConnection, req, destdir, type)
     return names
 end
 
+"""
+    downloadjobfiles(conn, req[, destdir])
+
+Download the uploaded input files for a given execution request.
+
+Files are saved to `destdir`, which defaults to `./{execution_id}/`.
+
+Returns a `Vector{String}` of downloaded file paths.
+
+See also [`downloadresults`](@ref).
+"""
 function downloadjobfiles(
     conn::AbstractConnection,
     req::Execution,
@@ -442,6 +461,17 @@ function downloadjobfiles(
     _downloadfiles(conn, req, destdir, :uploads)
 end
 
+"""
+    downloadresults(conn, req[, destdir])
+
+Download the result files for a given execution request.
+
+Files are saved to `destdir`, which defaults to `./{execution_id}/`.
+
+Returns a `Vector{String}` of downloaded file paths.
+
+See also [`downloadjobfiles`](@ref).
+"""
 function downloadresults(
     conn::AbstractConnection,
     req::Execution,

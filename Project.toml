@@ -1,6 +1,6 @@
 name = "MimiqLink"
 uuid = "75412a89-3e23-4d98-b652-ed58604dd601"
-version = "0.10.6"
+version = "0.10.7"
 authors = ["Guido Masella <guido.masella@qperfect.io>"]
 
 [deps]

@@ -106,6 +106,7 @@ export QPERFECT_DEV
 export AbstractConnection
 export MimiqConnection
 export PlanqkConnection
+export QhiveConnection
 export Execution
 
 # How does the library works?
@@ -162,6 +163,9 @@ include("planqk.jl")
 # Execution type
 include("execution.jl")
 
+# QhiveConnection type
+include("qhive.jl")
+
 """
     geturi(connection_type, uri)
     geturi(connection)
@@ -179,12 +183,20 @@ function geturi end
     connect(PlanqkConnection, url, consumer_key, consumer_secret)
     connect(PlanqkConnection)
 
+    connect(QhiveConnection)
+    connect(QhiveConnection, token)
+    connect(QhiveConnection, email, password)
+
 Establish a connection to the MIMIQ Services.
 
 The first three methods return a [`MimiqConnection`](@ref).
 
-The last method return a [`PlanqkConnection`](@ref) effectively connecting through
-[PlanQK](https://platform.planqk.de).
+The `PlanqkConnection` methods return a [`PlanqkConnection`](@ref), effectively
+connecting through [PlanQK](https://platform.planqk.de).
+
+The `QhiveConnection` methods return a [`QhiveConnection`](@ref), connecting to
+the Quantum Hive services through their Keycloak identity provider. See
+[`connect(::Type{QhiveConnection})`](@ref) for their keyword arguments.
 
 A refresh process will be spawned in the background to refresh the access credentials.
 An active connection can be closed by using the `close(connection)` method. As an example:

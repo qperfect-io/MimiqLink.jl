@@ -99,7 +99,10 @@ function PlanqkConnection(endpoint::URI, consumer_key::String, consumer_secret::
                 @info "Gracefully shutting down token refresher"
             else
                 put!(ch, JWTtoken("", "", "", 0))
-                @error "Connection to MIMIQ services dropped." exception=(ex, catch_backtrace())
+                @error "Connection to MIMIQ services dropped." exception=(
+                    ex,
+                    catch_backtrace(),
+                )
             end
         end
     end
@@ -139,7 +142,14 @@ end
 
 function Base.close(conn::PlanqkConnection)
     @info "Closing PlanQK connection to $(conn.uri)"
+
+    # A refresher that already stopped, because the connection dropped, cannot
+    # be scheduled again.
+    istaskdone(conn.refresher) && return nothing
+
     schedule(conn.refresher, InterruptException(); error=true)
+
+    return nothing
 end
 
 function connect(
@@ -183,4 +193,3 @@ function connect(
 
     return PlanqkConnection(url, consumer_key, consumer_secret)
 end
-

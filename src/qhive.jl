@@ -227,7 +227,13 @@ function Base.close(conn::QhiveConnection)
         end
     end
 
+    # A refresher that already stopped, because the connection dropped, cannot
+    # be scheduled again.
+    istaskdone(conn.refresher) && return nothing
+
     schedule(conn.refresher, InterruptException(); error=true)
+
+    return nothing
 end
 
 function _qhivecallback(
@@ -492,7 +498,7 @@ function request(
 
     _checkresponse(res, "Error creating execution request")
 
-    id = strip(String(HTTP.payload(res)))
+    id = String(strip(String(HTTP.payload(res))))
 
     # A job is only queued once every circuit is in place and the request is
     # committed, so a failure here leaves nothing running behind.

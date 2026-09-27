@@ -1,6 +1,6 @@
 name = "MimiqLink"
 uuid = "75412a89-3e23-4d98-b652-ed58604dd601"
-version = "0.11.0"
+version = "0.11.1"
 authors = ["Guido Masella <guido.masella@qperfect.io>"]
 
 [deps]
@@ -17,9 +17,18 @@ URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
 [compat]
 Base64 = "1.11.0"
 DotEnv = "1.0.0"
+FileTypes = "0.1.1"
+HTTP = "1.10"
+JSON = "1.4"
+ProgressLogging = "0.1.6"
+Random = "1.11.0"
+Sockets = "1.11.0"
+URIs = "1.6"
+julia = "1.11"
 
 [extras]
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test"]
+test = ["Logging", "Test"]

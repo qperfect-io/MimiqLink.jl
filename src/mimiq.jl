@@ -129,7 +129,7 @@ function MimiqConnection(uri::URI, token::Tokens; interval=DEFAULT_INTERVAL)
                 @debug "Received new limits" limits
 
                 checklimits(limits)
-                
+
                 # Atomic update of the limits channel
                 take!(ch_limits)
                 put!(ch_limits, limits)
@@ -138,7 +138,12 @@ function MimiqConnection(uri::URI, token::Tokens; interval=DEFAULT_INTERVAL)
             if isa(ex, InterruptException)
                 @info "Gracefully shutting down token refresher"
             else
+                # The channels are read with fetch, so they are still full here:
+                # a put! into a full channel would block and swallow the error
+                # instead of reporting the dropped connection.
+                isready(ch) && take!(ch)
                 put!(ch, Tokens())
+                isready(ch_limits) && take!(ch_limits)
                 put!(ch_limits, Dict())
                 @error "Connection to MIMIQ services dropped." exception =
                     (ex, catch_backtrace())
@@ -214,7 +219,14 @@ end
 
 function Base.close(conn::MimiqConnection)
     @info "Closing MIMIQ connection to $(conn.uri)"
+
+    # A refresher that already stopped, because the connection dropped, cannot
+    # be scheduled again.
+    istaskdone(conn.refresher) && return nothing
+
     schedule(conn.refresher, InterruptException(); error=true)
+
+    return nothing
 end
 
 function checklimits(limits::Dict)

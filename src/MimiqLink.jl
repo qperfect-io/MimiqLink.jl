@@ -94,6 +94,10 @@ export loadtoken
 export savetoken
 export request
 export requestinfo
+export requests
+export printrequests
+export stopexecution
+export deletefiles
 export isjobdone
 export isjobfailed
 export isjobstarted
@@ -216,7 +220,7 @@ close(connection)
 There are two main servers for the MIMIQ Services: the main one and a secondary one.
 Users are supposed to use the main one.
 
-```jldoctests
+```jldoctest
 julia> QPERFECT_CLOUD
 URI("https://mimiq.qperfect.io")
 

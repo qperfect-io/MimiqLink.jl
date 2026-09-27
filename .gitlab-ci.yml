@@ -1,14 +1,65 @@
 stages:
+  - test
   - register
 
+# One pipeline per change: on a merge request, on the two long-lived branches,
+# and on the tags a release pushes.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "devel" || $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG
+
 variables:
-  JULIA_PKG_USE_CLI_GIT: "true"
+  JULIA_DEPOT_PATH: "$CI_PROJECT_DIR/.julia"
 
 default:
   image: julia:1
 
+# The suite runs against local stand-ins for the MIMIQ and Quantum Hive APIs,
+# so it needs no credentials and reaches nothing outside the job.
+#
+# 1.11 is the oldest version the stdlib bounds in Project.toml admit; "1" is
+# whatever is current.
+test:
+  stage: test
+  parallel:
+    matrix:
+      - JULIA_VERSION: ["1.11", "1"]
+  image: julia:$JULIA_VERSION
+  script:
+    - julia --project=. --color=yes -e 'import Pkg; Pkg.instantiate(); Pkg.test()'
+  cache:
+    key: "julia-$JULIA_VERSION"
+    paths:
+      - .julia/
+
+# The repository carries a .JuliaFormatter.toml, so drifting from it is a
+# failure rather than something to notice in review.
+format:
+  stage: test
+  # The shared depot lives inside the project directory so the test jobs can
+  # cache it; this job must not find a few hundred packages to check.
+  variables:
+    JULIA_DEPOT_PATH: "/tmp/julia"
+  script:
+    - |
+      julia --color=yes -e '
+        import Pkg
+        Pkg.add("JuliaFormatter")
+        using JuliaFormatter
+        if !format(".")
+            @error "Formatting differs. Run: julia -e \"using JuliaFormatter; format(.)\""
+            exit(1)
+        end
+      '
+
 register:
   stage: register
+  # The registry lives behind a token, which the git rewrites below carry, so
+  # this job alone shells out to git rather than using Pkg's own client.
+  variables:
+    JULIA_PKG_USE_CLI_GIT: "true"
   # Only the `-private` tag registers into the internal GitLab registry;
   # the bare `vX.Y.Z` public tag is registered into QPerfectRegistry by
   # the GitHub Actions workflow on the public remote.

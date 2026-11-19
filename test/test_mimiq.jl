@@ -107,6 +107,18 @@ end
     finally
         close(server)
     end
+
+    # The service can leave a limit empty.
+    @test_logs MimiqLink.checklimits(
+        Dict{String, Any}(
+            "enabledExecutionTime" => true,
+            "usedExecutionTime" => nothing,
+            "maxExecutionTime" => 3600,
+            "enabledMaxExecutions" => true,
+            "usedExecutions" => 3,
+            "maxExecutions" => nothing,
+        ),
+    )
 end
 
 @testset "requests" begin

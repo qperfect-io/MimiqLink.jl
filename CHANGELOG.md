@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-11-19
+
+### Fixed
+
+- `savetoken` creates the token file readable by its owner only.
+- `connect` no longer fails when the service leaves a usage limit empty.
+
 ## [0.11.1] — 2026-09-27
 
 ### Added

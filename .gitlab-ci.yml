@@ -11,9 +11,17 @@ workflow:
     - if: $CI_COMMIT_TAG
 
 variables:
+  # Precompiling SymbolicUtils needs more memory than the K8S runner's
+  # default pod limit, and the kernel kills the job.
+  KUBERNETES_MEMORY_REQUEST: "4Gi"
+  KUBERNETES_MEMORY_LIMIT: "8Gi"
   JULIA_DEPOT_PATH: "$CI_PROJECT_DIR/.julia"
 
 default:
+  # The alpine runners have too little memory for Julia and cannot be given
+  # more per job, so jobs go to the K8S runner, which reads the
+  # KUBERNETES_MEMORY_* variables above.
+  tags: [kubernetes, linux]
   image: julia:1
 
 # The suite runs against local stand-ins for the MIMIQ and Quantum Hive APIs,

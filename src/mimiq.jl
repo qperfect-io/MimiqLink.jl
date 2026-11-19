@@ -230,19 +230,19 @@ function Base.close(conn::MimiqConnection)
 end
 
 function checklimits(limits::Dict)
-    if limits["enabledExecutionTime"]
-        usedtime = round(Int, limits["usedExecutionTime"] / 60)
-        maxtime = round(Int, limits["maxExecutionTime"] / 60)
-
-        if usedtime > maxtime
-            @warn "You exceeded your computing time limit of $maxtime minutes"
+    # The service reports seconds and may leave a limit empty.
+    if get(limits, "enabledExecutionTime", false) === true
+        usedtime = get(limits, "usedExecutionTime", nothing)
+        maxtime = get(limits, "maxExecutionTime", nothing)
+        if !isnothing(usedtime) && !isnothing(maxtime) && usedtime > maxtime
+            @warn "You exceeded your computing time limit of $(round(Int, maxtime / 60)) minutes"
         end
     end
 
-    if limits["enabledMaxExecutions"]
-        usedexec = limits["usedExecutions"]
-        maxexec = limits["maxExecutions"]
-        if usedexec > maxexec
+    if get(limits, "enabledMaxExecutions", false) === true
+        usedexec = get(limits, "usedExecutions", nothing)
+        maxexec = get(limits, "maxExecutions", nothing)
+        if !isnothing(usedexec) && !isnothing(maxexec) && usedexec > maxexec
             @warn "You exceeded your number of executions limit of $maxexec"
         end
     end
@@ -412,6 +412,8 @@ function savetoken(filename::AbstractString="qperfect.json"; url=QPERFECT_CLOUD)
     uri = _url_to_uri(url)
     tokens = get_mimiq_token_from_login_page(uri)
     open(filename, "w") do io
+        # Restrict the file before the token goes in.
+        chmod(filename, 0o600)
         JSON.print(io, Dict("url" => string(url), "token" => tokens.refreshtoken))
     end
     @info "Token saved in `$(filename)`"
